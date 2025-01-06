@@ -39,60 +39,22 @@ export function PlanManager({
   const planCache = useRef(new Map<string, { data: Plan[], timestamp: number }>());
   const loadAttemptedRef = useRef(false);
 
-  // Load plans only once when namespace is set
-  useEffect(() => {
-    if (!currentNamespace || !config || loadAttemptedRef.current) return;
-
-    const loadPlans = async () => {
-      setIsLoading(true);
-      try {
-        const activePlans = await getActivePlans(config, currentNamespace);
-        const sortedPlans = activePlans.sort((a, b) => 
-          new Date(b.created).getTime() - new Date(a.created).getTime()
-        );
-        
-        // Update cache
-        planCache.current.set(currentNamespace, {
-          data: sortedPlans,
-          timestamp: Date.now()
-        });
-        
-        setPlans(sortedPlans);
-        loadAttemptedRef.current = true;
-      } catch (error: any) {
-        console.error('Error loading plans:', error);
-        onError(error.message);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadPlans();
-  }, [currentNamespace, config, onError]);
-
-  // Reset loading attempted flag when namespace changes
-  useEffect(() => {
-    loadAttemptedRef.current = false;
-  }, [currentNamespace]);
-
-  // Handle manual refresh
-  const handleRefresh = useCallback(async () => {
+  const refreshPlans = useCallback(async () => {
     if (!currentNamespace || isLoading) return;
 
+    console.log('Refreshing plans for namespace:', currentNamespace);
     setIsLoading(true);
+    
     try {
       const activePlans = await getActivePlans(config, currentNamespace);
       const sortedPlans = activePlans.sort((a, b) => 
         new Date(b.created).getTime() - new Date(a.created).getTime()
       );
       
-      // Update cache
-      planCache.current.set(currentNamespace, {
-        data: sortedPlans,
-        timestamp: Date.now()
-      });
-      
+      console.log('Fetched plans:', sortedPlans.length);
       setPlans(sortedPlans);
+      loadAttemptedRef.current = true;
+
     } catch (error: any) {
       console.error('Error refreshing plans:', error);
       onError(error.message);
@@ -100,6 +62,35 @@ export function PlanManager({
       setIsLoading(false);
     }
   }, [currentNamespace, config, isLoading, onError]);
+
+  // Initial load when namespace changes
+  useEffect(() => {
+    if (currentNamespace && !loadAttemptedRef.current) {
+      console.log('Initial load for namespace:', currentNamespace);
+      refreshPlans();
+    }
+  }, [currentNamespace, refreshPlans]);
+
+  // Reset loading flag when namespace changes
+  useEffect(() => {
+    loadAttemptedRef.current = false;
+  }, [currentNamespace]);
+
+  // Listen for plan events
+  useEffect(() => {
+    const handlePlanEvent = () => {
+      console.log('Plan event triggered, refreshing...');
+      refreshPlans();
+    };
+
+    window.addEventListener('planCreated', handlePlanEvent);
+    window.addEventListener('planUpdated', handlePlanEvent);
+    
+    return () => {
+      window.removeEventListener('planCreated', handlePlanEvent);
+      window.removeEventListener('planUpdated', handlePlanEvent);
+    };
+  }, [refreshPlans]);
 
   const handleStepStatusUpdate = async (planId: string, stepId: string, newStatus: Plan['steps'][0]['status']) => {
     const plan = plans.find(p => p.id === planId);
@@ -131,12 +122,6 @@ export function PlanManager({
         prevPlans.map(p => p.id === planId ? updatedPlan : p)
       );
       
-      // Update cache
-      const cached = planCache.current.get(currentNamespace);
-      if (cached) {
-        cached.data = cached.data.map(p => p.id === planId ? updatedPlan : p);
-      }
-      
       if (selectedPlanId === planId) {
         onPlanSelect(updatedPlan);
       }
@@ -153,12 +138,8 @@ export function PlanManager({
     try {
       await deletePlan(plan, config);
       
-      // Update local state and cache
+      // Update local state
       setPlans(prevPlans => prevPlans.filter(p => p.id !== plan.id));
-      const cached = planCache.current.get(currentNamespace);
-      if (cached) {
-        cached.data = cached.data.filter(p => p.id !== plan.id);
-      }
       
       if (selectedPlanId === plan.id) {
         onPlanSelect(null);
@@ -201,7 +182,7 @@ export function PlanManager({
       <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
         <h2 className="text-lg font-semibold">Project Plans</h2>
         <button
-          onClick={handleRefresh}
+          onClick={refreshPlans}
           className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
           disabled={isLoading}
         >
@@ -212,7 +193,7 @@ export function PlanManager({
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {plans.length === 0 ? (
           <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-            No plans created yet
+            {isLoading ? 'Loading plans...' : 'No plans created yet'}
           </div>
         ) : (
           plans.map(plan => (
@@ -356,3 +337,5 @@ export function PlanManager({
     </div>
   );
 }
+
+export default PlanManager;

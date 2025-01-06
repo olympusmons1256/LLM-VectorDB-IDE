@@ -114,6 +114,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const ns = state.currentNamespace;
     if (!ns) return state;
     
+    console.log('Setting active plan:', plan?.id);
+    
+    // Dispatch event for plan updates
+    if (plan) {
+      window.dispatchEvent(new CustomEvent('planUpdated'));
+    }
+    
     return {
       projects: {
         ...state.projects,
@@ -132,17 +139,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!namespace) return;
     set({ isLoading: true });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      set({ isLoading: false });
+      // Trigger refresh events
+      window.dispatchEvent(new CustomEvent('planUpdated'));
+      
+      set(state => ({
+        projects: {
+          ...state.projects,
+          [namespace]: {
+            ...(state.projects[namespace] || EMPTY_PROJECT),
+            lastRefreshed: new Date().toISOString()
+          }
+        },
+        isLoading: false
+      }));
     } catch (error: any) {
       set({ error: error.message, isLoading: false });
     }
   }
 }));
 
+// Custom hooks for easier access to project state
 export const useCurrentProject = () => {
-  const state = useChatStore(state => state.projects[state.currentNamespace] || EMPTY_PROJECT);
-  return state;
+  return useChatStore(state => state.projects[state.currentNamespace] || EMPTY_PROJECT);
 };
 
 export const useMessages = () => {
@@ -155,4 +173,8 @@ export const useActivePlan = () => {
   return useChatStore(state => 
     state.projects[state.currentNamespace]?.activePlan || EMPTY_PROJECT.activePlan
   );
+};
+
+export const useNamespaceState = (namespace: string) => {
+  return useChatStore(state => state.projects[namespace] || EMPTY_PROJECT);
 };

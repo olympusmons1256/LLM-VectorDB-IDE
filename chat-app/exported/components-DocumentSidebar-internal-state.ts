@@ -153,38 +153,72 @@ export const useDocumentSidebarState = create<DocumentSidebarState>((set, get) =
       });
 
       console.log('Fetching documents for namespace:', namespace);
-      const response = await fetch(
-        new URL('/api/vector', process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:3000'),
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            operation: 'query_context',
-            config: state.config,
-            text: 'list all documents',
-            namespace,
-            filter: { isComplete: { $eq: true } },
-            includeTypes: ['project-structure', 'core-architecture', 'code', 'documentation']
-          }),
-          signal: abortController.signal
-        }
-      );
+
+      // First get all documents without filters to understand what's there
+      console.log('Fetching all documents to inspect metadata structure...');
+      const allDocsResponse = await fetch('/api/vector', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'query_context',
+          config: state.config,
+          text: 'list all documents',
+          namespace,
+          filter: null,
+          includeMetadata: true
+        }),
+        signal: abortController.signal
+      });
+
+      const allDocs = await allDocsResponse.json();
+      console.log('Raw document data:', {
+        firstDoc: allDocs.matches?.[0],
+        allDocs: allDocs.matches?.slice(0, 3), // Show first 3 docs
+        totalDocs: allDocs.matches?.length
+      });
+
+      // Now attempt filtered query
+      const response = await fetch('/api/vector', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'query_context',
+          config: state.config,
+          text: 'list all documents',
+          namespace,
+          filter: { 
+            $and: [
+              { type: { $in: ['project-structure', 'core-architecture', 'code', 'documentation'] } },
+              { isComplete: { $eq: true } }
+            ]
+          }
+        }),
+        signal: abortController.signal
+      });
 
       if (!response.ok) {
         throw new Error('Failed to fetch documents');
       }
 
       const data = await response.json();
-      console.log('Document query response:', {
+      console.log('Filtered document data:', {
         matchCount: data.matches?.length,
-        namespace
+        sampleMatch: data.matches?.[0],
+        namespace,
+        firstThreeDocs: data.matches?.slice(0, 3).map((d: any) => ({
+          filename: d.metadata?.filename,
+          metadata: d.metadata
+        }))
       });
       
       // Process and deduplicate documents
       const uniqueDocs = new Map();
       (data.matches || []).forEach((doc: IndexedDocument) => {
         const filename = doc.metadata?.filename;
-        if (!filename) return;
+        if (!filename) {
+          console.log('Document missing filename:', doc);
+          return;
+        }
         
         const existing = uniqueDocs.get(filename);
         if (!existing || 
@@ -197,7 +231,11 @@ export const useDocumentSidebarState = create<DocumentSidebarState>((set, get) =
       const processedDocs = Array.from(uniqueDocs.values());
       console.log('Processed documents:', {
         total: processedDocs.length,
-        namespace
+        namespace,
+        firstThreeDocs: processedDocs.slice(0, 3).map(d => ({
+          filename: d.metadata?.filename,
+          metadata: d.metadata
+        }))
       });
 
       // Update cache
@@ -251,8 +289,7 @@ export const useDocumentSidebarState = create<DocumentSidebarState>((set, get) =
         loadingState: { isLoading: true, status: 'Fetching namespaces...' }
       });
 
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:3000';
-      console.log('Attempting to fetch namespaces from:', `${apiBase}/api/vector`);
+      console.log('Attempting to fetch namespaces from /api/vector');
 
       const requestBody = {
         operation: 'list_namespaces',
@@ -261,7 +298,7 @@ export const useDocumentSidebarState = create<DocumentSidebarState>((set, get) =
       
       console.log('Request payload:', JSON.stringify(requestBody, null, 2));
 
-      const response = await fetch(`${apiBase}/api/vector`, {
+      const response = await fetch('/api/vector', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

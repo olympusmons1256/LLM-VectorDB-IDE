@@ -53,6 +53,11 @@ export function PlanControlPanel({
           </button>
         </div>
       </div>
+      {isProcessing && (
+        <div className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          Processing plan execution...
+        </div>
+      )}
     </div>
   );
 }

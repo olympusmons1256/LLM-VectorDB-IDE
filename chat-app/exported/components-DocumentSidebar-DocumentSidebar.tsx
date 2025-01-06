@@ -31,32 +31,21 @@ export function DocumentSidebar({
       cloud: config?.vectordb?.cloud,
       region: config?.vectordb?.region
     });
-    console.log('Current namespaces state:', namespaces);
     
     if (config) {
       console.log('Initializing with config...');
       initialize(config);
     }
-  }, [config, initialize, namespaces]);
-
-  useEffect(() => {
-    console.log('Configuration status changed:', {
-      isConfigured,
-      isLoading,
-      loadingState,
-      currentNamespace,
-      namespaceCount: Object.keys(namespaces).length
-    });
-  }, [isConfigured, isLoading, loadingState, currentNamespace, namespaces]);
+  }, [config, initialize]);
 
   if (!visible) {
-    console.log('DocumentSidebar hidden');
     return null;
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="flex-shrink-0 border-b p-4">
+    <div className="h-[calc(100vh-var(--header-height,64px))] flex flex-col overflow-hidden">
+      {/* Header with namespace manager */}
+      <div className="flex-shrink-0 border-b dark:border-gray-700 p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-medium">Document Manager</h2>
           {isConfigured && currentNamespace && (
@@ -80,10 +69,7 @@ export function DocumentSidebar({
         ) : (
           <NamespaceManager
             currentNamespace={currentNamespace}
-            onNamespaceChange={(namespace) => {
-              console.log('Namespace selected:', namespace);
-              onNamespaceChange(namespace);
-            }}
+            onNamespaceChange={onNamespaceChange}
             onError={onError}
           />
         )}
@@ -91,18 +77,21 @@ export function DocumentSidebar({
 
       {isConfigured && currentNamespace && (
         <>
-          <div className="flex-shrink-0 border-b p-4">
+          {/* File type filter */}
+          <div className="flex-shrink-0 border-b dark:border-gray-700 p-4">
             <FileTypeFilter />
           </div>
           
-          <div className="flex-shrink-0 border-b">
+          {/* File uploader */}
+          <div className="flex-shrink-0 border-b dark:border-gray-700">
             <FileUploader 
               namespace={currentNamespace} 
               onError={onError}
             />
           </div>
 
-          <div className="flex-1 overflow-hidden">
+          {/* Document list - scrollable area */}
+          <div className="flex-1 min-h-0 overflow-auto">
             <DocumentList 
               namespace={currentNamespace}
               loadingState={loadingState}

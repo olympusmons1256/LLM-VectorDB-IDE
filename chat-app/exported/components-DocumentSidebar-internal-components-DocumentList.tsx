@@ -64,8 +64,8 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
   }
 
   return (
-    <div className="flex-1 mt-4 flex flex-col min-h-0">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
         <span className="text-sm text-gray-500">
           {sortedDocs.length} document{sortedDocs.length === 1 ? '' : 's'}
         </span>
@@ -77,8 +77,8 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
         </button>
       </div>
 
-      <div className="overflow-y-auto flex-1">
-        <div className="space-y-1">
+      <div className="flex-1 overflow-y-auto min-h-0 px-4">
+        <div className="space-y-1 py-2">
           {sortedDocs.map((doc, idx) => (
             <DocumentListItem 
               key={`${doc.metadata?.filename}-${idx}`}

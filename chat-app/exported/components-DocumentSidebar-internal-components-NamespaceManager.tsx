@@ -30,7 +30,8 @@ export function NamespaceManager({
     }
   
     try {
-      const response = await fetch(new URL('/api/vector', process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:3000'), {
+      console.log('Creating namespace:', newNamespaceName);
+      const response = await fetch('/api/vector', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -43,21 +44,25 @@ export function NamespaceManager({
       if (!response.ok) {
         throw new Error('Failed to create namespace');
       }
-
+      
+      console.log('Namespace created successfully');
       setNewNamespaceName('');
       setShowNewNamespaceInput(false);
+
       await useDocumentSidebarState.getState().refreshNamespaces();
 
     } catch (error: any) {
+      console.error('Error creating namespace:', error);
       onError(error.message);
     }
   };
 
   const handleDeleteNamespace = async (namespace: string) => {
     try {
+      console.log('Deleting namespace:', namespace);
       setIsDeleting(true);
       
-      const response = await fetch(new URL('/api/vector', process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:3000'), {
+      const response = await fetch('/api/vector', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -78,10 +83,28 @@ export function NamespaceManager({
       await useDocumentSidebarState.getState().refreshNamespaces();
 
     } catch (error: any) {
+      console.error('Error deleting namespace:', error);
       onError(`Failed to delete namespace: ${error.message}`);
     } finally {
       setIsDeleting(false);
       setNamespaceToDelete(null);
+    }
+  };
+
+  const handleNamespaceChange = async (namespace: string) => {
+    console.log('Namespace change triggered:', namespace);
+    onNamespaceChange(namespace);
+
+    // Immediately refresh documents for the new namespace
+    const documentState = useDocumentSidebarState.getState();
+    if (documentState.isConfigured && namespace) {
+      console.log('Refreshing documents for new namespace:', namespace);
+      try {
+        await documentState.refreshDocuments(namespace);
+      } catch (error) {
+        console.error('Error refreshing documents:', error);
+        onError('Failed to load namespace documents');
+      }
     }
   };
 
@@ -91,7 +114,7 @@ export function NamespaceManager({
       <div className="flex items-center gap-2">
         <select
           value={currentNamespace}
-          onChange={(e) => onNamespaceChange(e.target.value)}
+          onChange={(e) => handleNamespaceChange(e.target.value)}
           className="flex-1 p-2 rounded-lg border dark:border-gray-700 bg-white dark:bg-gray-800"
         >
           <option value="">Select a namespace</option>

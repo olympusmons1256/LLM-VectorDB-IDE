@@ -16,9 +16,7 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
   const adjustTextareaHeight = () => {
     const textarea = textareaRef.current;
     if (textarea) {
-      // Reset height to measure scrollHeight correctly
       textarea.style.height = 'auto';
-      // Set new height based on content
       const newHeight = Math.min(textarea.scrollHeight, 200);
       textarea.style.height = `${newHeight}px`;
     }
@@ -33,7 +31,6 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
     if (message.trim() && !isLoading) {
       onSendMessage(message);
       setMessage('');
-      // Reset height after sending
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
@@ -46,7 +43,6 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
       if (message.trim() && !isLoading) {
         onSendMessage(message);
         setMessage('');
-        // Reset height after sending
         if (textareaRef.current) {
           textareaRef.current.style.height = 'auto';
         }
@@ -55,32 +51,34 @@ export function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-      <div className="flex items-start gap-2">
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={(e) => {
-            setMessage(e.target.value);
-            adjustTextareaHeight();
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={isLoading ? "Waiting for response..." : "Type your message... (Shift+Enter for new line)"}
-          className="flex-1 p-2 rounded-lg border dark:border-gray-700 bg-background text-foreground
-                   disabled:opacity-50 resize-none min-h-[40px] max-h-[200px] overflow-y-auto"
-          disabled={isLoading}
-          rows={1}
-        />
-        <button
-          type="submit"
-          disabled={isLoading || !message.trim()}
-          className="flex-shrink-0 p-2 rounded-lg bg-blue-500 text-white w-10 h-10
-                   disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 
-                   transition-colors flex items-center justify-center"
-        >
-          <Send className="h-5 w-5" />
-        </button>
-      </div>
-    </form>
+    <div className="w-full flex justify-center p-4">
+      <form onSubmit={handleSubmit} className="w-full max-w-[600px]">
+        <div className="flex items-start gap-2">
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={(e) => {
+              setMessage(e.target.value);
+              adjustTextareaHeight();
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={isLoading ? "Waiting for response..." : "Type your message... (Shift+Enter for new line)"}
+            className="flex-1 p-2 rounded-lg border dark:border-gray-700 bg-background text-foreground
+                     disabled:opacity-50 resize-none min-h-[40px] max-h-[200px] overflow-y-auto"
+            disabled={isLoading}
+            rows={1}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !message.trim()}
+            className="flex-shrink-0 p-2 rounded-lg bg-blue-500 text-white w-10 h-10
+                     disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-600 
+                     transition-colors flex items-center justify-center"
+          >
+            <Send className="h-5 w-5" />
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

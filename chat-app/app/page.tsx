@@ -153,7 +153,7 @@ export default function ChatPage() {
     <div className="h-screen flex flex-col">
       <LayoutCustomizer onLayoutChange={handleLayoutChange} currentLayout={layoutMode} />
       
-      {/* Minimal top bar */}
+      {/* Top bar */}
       <div className="flex items-center justify-between h-12 px-4 border-b dark:border-gray-700">
         <div className="flex items-center gap-4">
           <Menu className="h-5 w-5 cursor-pointer" onClick={() => setSidebarOpen(!sidebarOpen)} />
@@ -192,19 +192,21 @@ export default function ChatPage() {
         />
 
         {/* Chat area */}
-        <div className="flex-1 flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg">
-          {activePlan && (
-            <div className="px-4 py-2 text-sm border-b dark:border-gray-700">
-              Active Plan: <span className="font-medium">{activePlan.title}</span>
-            </div>
-          )}
-          <Chat
-            messages={messages}
-            isLoading={isLoading}
-            error={error}
-            onSendMessage={handleSendMessage}
-            hasApiKey={provider => Boolean(apiKeys[provider])}
-          />
+        <div className="w-full flex justify-center">
+          <div className="flex-1 flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg max-w-[900px]">
+            {activePlan && (
+              <div className="px-4 py-2 text-sm border-b dark:border-gray-700">
+                Active Plan: <span className="font-medium">{activePlan.title}</span>
+              </div>
+            )}
+            <Chat
+              messages={messages}
+              isLoading={isLoading}
+              error={error}
+              onSendMessage={handleSendMessage}
+              hasApiKey={provider => Boolean(apiKeys[provider])}
+            />
+          </div>
         </div>
 
         {/* Right sidebar */}
