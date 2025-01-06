@@ -1,7 +1,6 @@
-// components/PlanManager.tsx
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plan, getActivePlans, updatePlan, deletePlan } from '@/services/plans';
 import { Check, Clock, AlertCircle, PlayCircle, PauseCircle, RefreshCw, Trash2 } from 'lucide-react';
 import type { EmbeddingConfig } from '@/services/embedding';
@@ -36,50 +35,46 @@ export function PlanManager({
   const [planToDelete, setPlanToDelete] = useState<Plan | null>(null);
   const [isDeletingPlan, setIsDeletingPlan] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const planCache = useRef(new Map<string, { data: Plan[], timestamp: number }>());
-  const loadAttemptedRef = useRef(false);
 
   const refreshPlans = useCallback(async () => {
-    if (!currentNamespace || isLoading) return;
+    if (!currentNamespace) {
+      console.log('No namespace selected, skipping refresh');
+      return;
+    }
 
     console.log('Refreshing plans for namespace:', currentNamespace);
     setIsLoading(true);
     
     try {
       const activePlans = await getActivePlans(config, currentNamespace);
+      console.log('Fetched plans:', activePlans.length);
+      
+      // Sort plans by last updated timestamp
       const sortedPlans = activePlans.sort((a, b) => 
-        new Date(b.created).getTime() - new Date(a.created).getTime()
+        new Date(b.updated).getTime() - new Date(a.updated).getTime()
       );
       
-      console.log('Fetched plans:', sortedPlans.length);
       setPlans(sortedPlans);
-      loadAttemptedRef.current = true;
-
     } catch (error: any) {
       console.error('Error refreshing plans:', error);
       onError(error.message);
     } finally {
       setIsLoading(false);
     }
-  }, [currentNamespace, config, isLoading, onError]);
+  }, [currentNamespace, config, onError]);
 
   // Initial load when namespace changes
   useEffect(() => {
-    if (currentNamespace && !loadAttemptedRef.current) {
+    if (currentNamespace) {
       console.log('Initial load for namespace:', currentNamespace);
       refreshPlans();
     }
   }, [currentNamespace, refreshPlans]);
 
-  // Reset loading flag when namespace changes
-  useEffect(() => {
-    loadAttemptedRef.current = false;
-  }, [currentNamespace]);
-
   // Listen for plan events
   useEffect(() => {
     const handlePlanEvent = () => {
-      console.log('Plan event triggered, refreshing...');
+      console.log('Plan event detected, refreshing plans');
       refreshPlans();
     };
 
@@ -125,6 +120,9 @@ export function PlanManager({
       if (selectedPlanId === planId) {
         onPlanSelect(updatedPlan);
       }
+
+      // Trigger refresh
+      window.dispatchEvent(new CustomEvent('planUpdated'));
 
     } catch (error: any) {
       console.error('Error updating plan step:', error);
@@ -182,7 +180,7 @@ export function PlanManager({
       <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
         <h2 className="text-lg font-semibold">Project Plans</h2>
         <button
-          onClick={refreshPlans}
+          onClick={() => refreshPlans()}
           className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
           disabled={isLoading}
         >
@@ -337,5 +335,3 @@ export function PlanManager({
     </div>
   );
 }
-
-export default PlanManager;

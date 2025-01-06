@@ -5,11 +5,13 @@ import { Send } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PlanControlPanel } from '@/components/PlanControlPanel';
 import type { Message } from '@/types/message';
 import type { CodeAnnotation } from '@/types/code-block';
-import { useCurrentProject } from '@/store/chat-store';
+import { useCurrentProject, useChatStore } from '@/store/chat-store';
+import { createPlan, updatePlan } from '@/services/plans';
 
-export interface Model {
+interface Model {
   provider: 'anthropic' | 'openai';
   id: string;
   name: string;
@@ -32,7 +34,6 @@ interface ChatProps {
   hasApiKey?: (provider: Model['provider']) => boolean;
   onCodeBlockSelect?: (blockId: string) => void;
   selectedCodeBlockId?: string;
-  currentNamespace?: string;
 }
 
 interface ChatMessageProps {
@@ -41,32 +42,109 @@ interface ChatMessageProps {
   onRegenerate?: () => void;
   onCodeBlockSelect?: (blockId: string) => void;
   className?: string;
+  onHandlePlanAction?: (action: 'next' | 'auto', setProcessing: (isProcessing: boolean) => void) => void;
+  onSendMessage?: (content: string) => void;
 }
 
 function ChatMessage({ 
   message, 
-  isUser = false,
-  onRegenerate,
-  onCodeBlockSelect,
-  className = '' 
+  isUser = false, 
+  onCodeBlockSelect, 
+  className = '', 
+  onHandlePlanAction 
 }: ChatMessageProps) {
+  const [showControls, setShowControls] = useState(false);
+  const [isProcessingPlan, setIsProcessingPlan] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const { currentNamespace } = useChatStore();
+  const vectorDBConfig = useChatStore((state) => state.vectorDBConfig);
+  const apiKeys = useChatStore((state) => state.apiKeys);
+  const setActivePlan = useChatStore((state) => state.setActivePlan);
+
+  useEffect(() => {
+    if (!isUser) {
+      const isPlanRelated = (
+        message.content.includes('## Plan:') ||
+        message.content.includes('\nPlan:') ||
+        message.content.includes('Plan: ') ||
+        message.content.includes('Here is a plan') ||
+        message.content.match(/\d+\.\s+.*\n(?:\s+[-•].*\n)+/)
+      );
+
+      if (isPlanRelated && currentNamespace) {
+        console.log('Plan detected in message, attempting to create plan');
+        setShowControls(true);
+        
+        // Create the plan
+        const config = {
+          apiKeys,
+          vectordb: vectorDBConfig,
+          embedding: { provider: 'voyage' as const }
+        };
+
+        createPlan(message.content, config, currentNamespace)
+          .then(newPlan => {
+            if (newPlan) {
+              console.log('Plan created successfully:', newPlan.id);
+              setActivePlan(newPlan);
+              window.dispatchEvent(new CustomEvent('planCreated'));
+            }
+          })
+          .catch(error => {
+            console.error('Error creating plan:', error);
+            setPlanError('Failed to create plan');
+          });
+      }
+    }
+  }, [message, isUser, currentNamespace, apiKeys, vectorDBConfig, setActivePlan]);
+
+  const handleExecuteNext = async () => {
+    if (!onHandlePlanAction) return;
+    setIsProcessingPlan(true);
+    setPlanError(null);
+    try {
+      await onHandlePlanAction('next', (isProcessing) => {
+        setIsProcessingPlan(isProcessing);
+      });
+    } catch (error) {
+      console.error('Error executing next step:', error);
+      setPlanError('Failed to execute next step');
+      setIsProcessingPlan(false);
+    }
+  };
+
+  const handleAutoExecute = async () => {
+    if (!onHandlePlanAction) return;
+    setIsProcessingPlan(true);
+    setPlanError(null);
+    try {
+      await onHandlePlanAction('auto', (isProcessing) => {
+        setIsProcessingPlan(isProcessing);
+      });
+    } catch (error) {
+      console.error('Error starting auto-pilot:', error);
+      setPlanError('Failed to start auto-pilot');
+      setIsProcessingPlan(false);
+    }
+  };
+
   return (
     <div className="max-w-[900px] mx-auto">
       <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
         <div
           className={`max-w-[80%] rounded-lg p-4 ${
             isUser
-              ? 'bg-blue-600 dark:bg-blue-700 text-white'
-              : 'bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 border dark:border-gray-700'
+              ? 'bg-gray-800 text-white'
+              : 'bg-background border dark:border-gray-700'
           } ${className}`}
         >
-          <div className="prose dark:prose-invert max-w-none prose-sm prose-p:leading-relaxed">
+          <div className="prose dark:prose-invert dark:text-foreground max-w-none prose-sm prose-p:leading-relaxed">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
                 code: ({ inline, className, children }) => {
                   if (inline) {
-                    return <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-800 dark:text-gray-200">{children}</code>;
+                    return <code className="bg-muted px-1.5 py-0.5 rounded text-foreground">{children}</code>;
                   }
                   return null;
                 },
@@ -76,67 +154,89 @@ function ChatMessage({
                     return (
                       <button
                         onClick={() => onCodeBlockSelect?.(href)}
-                        className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
+                        className="text-primary hover:underline inline-flex items-center gap-1"
                       >
                         {children}
-                        <span className="text-xs text-blue-500 dark:text-blue-400">↗</span>
+                        <span className="text-xs text-primary/80">↗</span>
                       </button>
                     );
                   }
                   return (
                     <a href={href} target="_blank" rel="noopener noreferrer" 
-                       className="text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300 transition-colors">
+                       className="text-primary hover:underline transition-colors">
                       {children}
                     </a>
                   );
                 },
                 ul: ({children}) => (
-                  <ul className="list-disc list-inside my-2 text-gray-900 dark:text-gray-100">
+                  <ul className="list-disc list-inside my-2 text-foreground">
                     {children}
                   </ul>
                 ),
                 ol: ({children}) => (
-                  <ol className="list-decimal list-inside my-2 text-gray-900 dark:text-gray-100">
+                  <ol className="list-decimal list-inside my-2 text-foreground">
                     {children}
                   </ol>
                 ),
-                h1: ({children}) => <h1 className="text-2xl font-bold my-3 text-gray-900 dark:text-gray-100">{children}</h1>,
-                h2: ({children}) => <h2 className="text-xl font-bold my-2 text-gray-900 dark:text-gray-100">{children}</h2>,
-                h3: ({children}) => <h3 className="text-lg font-bold my-2 text-gray-900 dark:text-gray-100">{children}</h3>,
-                em: ({children}) => <em className="italic text-gray-800 dark:text-gray-200">{children}</em>,
-                strong: ({children}) => <strong className="font-bold text-gray-900 dark:text-gray-100">{children}</strong>,
-                blockquote: ({children}) => (
-                  <blockquote className="border-l-4 border-gray-200 dark:border-gray-700 pl-4 my-2 italic text-gray-700 dark:text-gray-300">
-                    {children}
-                  </blockquote>
-                ),
+                h1: ({children}) => <h1 className="text-2xl font-bold my-3 text-foreground">{children}</h1>,
+                h2: ({children}) => <h2 className="text-xl font-bold my-2 text-foreground">{children}</h2>,
+                h3: ({children}) => <h3 className="text-lg font-bold my-2 text-foreground">{children}</h3>
               }}
             >
               {message.content}
             </ReactMarkdown>
           </div>
           {message.tools?.map((tool, index) => (
-            <div key={index} className="mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded border dark:border-gray-700">
+            <div key={index} className="mt-2 p-2 bg-muted rounded border dark:border-gray-700">
               <div className="flex items-center justify-between mb-1">
-                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">{tool.language}</div>
+                <div className="text-xs text-muted-foreground font-mono">{tool.language}</div>
               </div>
-              <pre className="overflow-x-auto bg-gray-100 dark:bg-gray-900 rounded p-2">
-                <code className="text-sm text-gray-800 dark:text-gray-200 font-mono">{tool.code}</code>
+              <pre className="overflow-x-auto bg-background rounded p-2">
+                <code className="text-sm text-foreground font-mono">{tool.code}</code>
               </pre>
             </div>
           ))}
+          {showControls && !isUser && onHandlePlanAction && (
+            <div className="mt-4 border-t dark:border-gray-700 pt-4">
+              {planError && (
+                <div className="mb-4 p-2 text-sm text-red-500 bg-red-100 dark:bg-red-900/20 rounded">
+                  {planError}
+                </div>
+              )}
+              <PlanControlPanel 
+                onExecuteNext={handleExecuteNext}
+                onAutoExecute={handleAutoExecute}
+                isProcessing={isProcessingPlan}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-interface ChatInputProps {
-  onSendMessage: (message: string) => void;
-  isLoading: boolean;
+function LoadingMessage() {
+  return (
+    <div className="max-w-[900px] mx-auto">
+      <div className="flex justify-start">
+        <div className="max-w-[80%] rounded-lg p-4 bg-background border dark:border-gray-700">
+          <div className="flex items-center gap-2 text-foreground">
+            <div className="animate-spin rounded-full h-4 w-4 
+                          border-2 border-muted-foreground
+                          border-t-transparent" />
+            <span>AI is thinking...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
+function ChatInput({ onSendMessage, isLoading }: { 
+  onSendMessage: (message: string) => void;
+  isLoading: boolean;
+}) {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -158,13 +258,16 @@ function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
     if (message.trim() && !isLoading) {
       onSendMessage(message);
       setMessage('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
     }
   };
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-      <div className="flex">
-        <div className="relative flex-1">
+      <div className="flex relative">
+        <div className="w-full">
           <textarea
             ref={textareaRef}
             value={message}
@@ -178,17 +281,20 @@ function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
                 if (message.trim() && !isLoading) {
                   onSendMessage(message);
                   setMessage('');
+                  if (textareaRef.current) {
+                    textareaRef.current.style.height = 'auto';
+                  }
                 }
               }
             }}
             placeholder={isLoading ? "Waiting for response..." : "Type your message... (Shift+Enter for new line)"}
             className="w-full p-2 pr-12 rounded-lg border dark:border-gray-700 
-                     bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 
-                     placeholder-gray-500 dark:placeholder-gray-400
+                     bg-background text-foreground
+                     placeholder:text-muted-foreground/70
                      disabled:opacity-50 resize-none 
                      min-h-[40px] max-h-[200px] overflow-y-auto
-                     focus:outline-none focus:ring-1 focus:ring-blue-500 
-                     dark:focus:ring-blue-400 transition-all"
+                     focus:outline-none focus:ring-1 focus:ring-primary
+                     transition-all"
             disabled={isLoading}
             rows={1}
           />
@@ -196,12 +302,12 @@ function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
             type="submit"
             disabled={isLoading || !message.trim()}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-2 
-                     rounded-lg bg-blue-500 text-white
+                     rounded-lg bg-primary text-primary-foreground
                      disabled:opacity-50 disabled:cursor-not-allowed 
-                     hover:bg-blue-600 dark:hover:bg-blue-600 
+                     hover:bg-primary/90
                      transition-colors w-8 h-8 flex items-center justify-center
-                     focus:outline-none focus:ring-2 focus:ring-blue-500 
-                     dark:focus:ring-blue-400"
+                     focus:outline-none focus:ring-2 focus:ring-primary
+                     z-10"
           >
             <Send className="h-4 w-4" />
           </button>
@@ -232,10 +338,10 @@ function ModelSelector({
           }
         }}
         className="text-xs h-7 px-2 rounded border dark:border-gray-700 
-                bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100
-                hover:bg-gray-100 dark:hover:bg-gray-700
-                focus:outline-none focus:ring-1 focus:ring-blue-500 
-                dark:focus:ring-blue-400 min-w-[160px]
+                bg-background text-foreground
+                hover:bg-muted
+                focus:outline-none focus:ring-1 focus:ring-primary
+                min-w-[160px]
                 disabled:opacity-50 disabled:cursor-not-allowed
                 transition-colors"
       >
@@ -246,30 +352,13 @@ function ModelSelector({
               key={`${model.provider}:${model.id}`}
               value={`${model.provider}:${model.id}`}
               disabled={disabled}
-              className={disabled ? 'opacity-50 text-gray-500' : ''}
+              className={disabled ? 'opacity-50' : ''}
             >
               {model.name}{disabled ? ' (No API Key)' : ''}
             </option>
           );
         })}
       </select>
-    </div>
-  );
-}
-
-function LoadingMessage() {
-  return (
-    <div className="max-w-[900px] mx-auto">
-      <div className="flex justify-start">
-        <div className="max-w-[80%] rounded-lg p-4 bg-gray-50 dark:bg-gray-900 border dark:border-gray-700">
-          <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300">
-            <div className="animate-spin rounded-full h-4 w-4 
-                          border-2 border-gray-500 dark:border-gray-400 
-                          border-t-transparent" />
-            <span>AI is thinking...</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -281,15 +370,18 @@ export function Chat({
   onSendMessage,
   hasApiKey,
   onCodeBlockSelect,
-  selectedCodeBlockId,
-  currentNamespace
+  selectedCodeBlockId
 }: ChatProps) {
   const [mounted, setMounted] = useState(false);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  
   const { activePlan } = useCurrentProject();
+  const vectorDBConfig = useChatStore((state) => state.vectorDBConfig);
+  const apiKeys = useChatStore((state) => state.apiKeys);
+  const setActivePlan = useChatStore((state) => state.setActivePlan);
 
   const scrollToBottom = useCallback(() => {
     if (scrollTimeoutRef.current) {
@@ -331,6 +423,7 @@ export function Chat({
   }, [messages.length, mounted, scrollToBottom]);
 
   const handleSendMessage = useCallback((content: string) => {
+    console.log('Sending message:', content);
     if (!selectedModel) {
       setModelError('Please select a model first');
       return;
@@ -345,34 +438,112 @@ export function Chat({
     onSendMessage(content, selectedModel);
   }, [selectedModel, hasApiKey, onSendMessage]);
 
+  const handlePlanAction = useCallback(async (
+    action: 'next' | 'auto', 
+    messageContent: string,
+    setProcessing: (isProcessing: boolean) => void
+  ) => {
+    console.log('Plan action triggered');
+    
+    if (!selectedModel) {
+      setModelError('Please select a model first');
+      return;
+    }
+
+    try {
+      // Immediately send instruction based on action type
+      if (action === 'next') {
+        if (activePlan) {
+          const nextStep = activePlan.steps.find(step => step.status === 'pending');
+          if (nextStep) {
+            console.log('Sending next step instruction:', nextStep.title);
+            handleSendMessage(`Please proceed with step "${nextStep.title}" of the plan.`);
+          } else {
+            throw new Error('No remaining steps to execute');
+          }
+        } else {
+          console.log('Sending first step instruction');
+          handleSendMessage('Please proceed with the first step of the plan.');
+        }
+      } else {
+        console.log('Sending auto-pilot instruction');
+        handleSendMessage(
+          `Please execute the entire plan automatically. After each step, mark it as completed ` +
+          `and proceed to the next step until all steps are done. Provide updates on progress.`
+        );
+      }
+
+      // Process plan in background if needed
+      if (activePlan) {
+        const updatedPlan = { ...activePlan };
+        const nextStep = updatedPlan.steps.find(step => step.status === 'pending');
+        if (nextStep) {
+          console.log('Updating step status:', nextStep.title);
+          nextStep.status = 'in_progress';
+          nextStep.updated = new Date().toISOString();
+          updatedPlan.updated = new Date().toISOString();
+          try {
+            await updatePlan(updatedPlan, {
+              apiKeys,
+              vectordb: vectorDBConfig,
+              embedding: { provider: 'voyage' as const }
+            });
+            setActivePlan(updatedPlan);
+          } catch (error) {
+            console.error('Error updating plan:', error);
+            // Continue even if plan update fails
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Error in plan action:', error);
+      throw error;
+    } finally {
+      setProcessing(false);
+    }
+  }, [selectedModel, activePlan, handleSendMessage, apiKeys, vectorDBConfig, setActivePlan]);
+
   if (!mounted) return null;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-screen overflow-hidden">
       {(error || modelError) && (
         <Alert variant="destructive" 
-              className="m-4 flex-shrink-0 bg-red-50 dark:bg-red-900/20 
-                        border-red-200 dark:border-red-800">
-                          <AlertDescription className="text-red-800 dark:text-red-200">
+              className="m-4 flex-shrink-0 bg-destructive/10 border-destructive/20">
+          <AlertDescription className="text-destructive">
             {error || modelError}
           </AlertDescription>
         </Alert>
       )}
 
-      <div className="flex-1 overflow-y-scroll p-4 space-y-4">
+      <div className="relative flex-1 overflow-y-auto h-[calc(100vh-180px)] p-4 space-y-4">
         {messages.map((message, index) => (
           <ChatMessage 
             key={index}
             message={message}
             isUser={message.role === 'user'}
             onCodeBlockSelect={onCodeBlockSelect}
+            onHandlePlanAction={(action, setProcessing) => {
+              console.log('Plan action requested:', action);
+              setProcessing(true);
+              handlePlanAction(action, message.content, setProcessing)
+                .catch(error => {
+                  console.error('Error in plan action:', error);
+                  setModelError(error instanceof Error ? error.message : 'Failed to execute plan action');
+                })
+                .finally(() => {
+                  console.log('Plan action completed');
+                  setProcessing(false);
+                });
+            }}
           />
         ))}
         {isLoading && <LoadingMessage />}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="flex-shrink-0 border-t dark:border-gray-700 bg-background">
+      <div className="flex-shrink-0 border-t dark:border-gray-700 bg-background h-[130px]">
         <div className="max-w-[900px] mx-auto space-y-2 p-4">
           <ChatInput 
             onSendMessage={handleSendMessage} 
@@ -389,4 +560,4 @@ export function Chat({
   );
 }
 
-export type { ChatProps, Model };
+export { type Model };

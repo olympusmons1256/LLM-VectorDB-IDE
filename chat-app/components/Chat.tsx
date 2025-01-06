@@ -5,9 +5,11 @@ import { Send } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PlanControlPanel } from '@/components/PlanControlPanel';
 import type { Message } from '@/types/message';
 import type { CodeAnnotation } from '@/types/code-block';
-import { useCurrentProject } from '@/store/chat-store';
+import { useCurrentProject, useChatStore } from '@/store/chat-store';
+import { createPlan, updatePlan } from '@/services/plans';
 
 interface Model {
   provider: 'anthropic' | 'openai';
@@ -32,7 +34,6 @@ interface ChatProps {
   hasApiKey?: (provider: Model['provider']) => boolean;
   onCodeBlockSelect?: (blockId: string) => void;
   selectedCodeBlockId?: string;
-  currentNamespace?: string;
 }
 
 interface ChatMessageProps {
@@ -41,15 +42,92 @@ interface ChatMessageProps {
   onRegenerate?: () => void;
   onCodeBlockSelect?: (blockId: string) => void;
   className?: string;
+  onHandlePlanAction?: (action: 'next' | 'auto', setProcessing: (isProcessing: boolean) => void) => void;
+  onSendMessage?: (content: string) => void;
 }
 
 function ChatMessage({ 
   message, 
-  isUser = false,
-  onRegenerate,
-  onCodeBlockSelect,
-  className = '' 
+  isUser = false, 
+  onCodeBlockSelect, 
+  className = '', 
+  onHandlePlanAction 
 }: ChatMessageProps) {
+  const [showControls, setShowControls] = useState(false);
+  const [isProcessingPlan, setIsProcessingPlan] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const { currentNamespace } = useChatStore();
+  const vectorDBConfig = useChatStore((state) => state.vectorDBConfig);
+  const apiKeys = useChatStore((state) => state.apiKeys);
+  const setActivePlan = useChatStore((state) => state.setActivePlan);
+
+  useEffect(() => {
+    if (!isUser) {
+      const isPlanRelated = (
+        message.content.includes('## Plan:') ||
+        message.content.includes('\nPlan:') ||
+        message.content.includes('Plan: ') ||
+        message.content.includes('Here is a plan') ||
+        message.content.match(/\d+\.\s+.*\n(?:\s+[-•].*\n)+/)
+      );
+
+      if (isPlanRelated && currentNamespace) {
+        console.log('Plan detected in message, attempting to create plan');
+        setShowControls(true);
+        
+        // Create the plan
+        const config = {
+          apiKeys,
+          vectordb: vectorDBConfig,
+          embedding: { provider: 'voyage' as const }
+        };
+
+        createPlan(message.content, config, currentNamespace)
+          .then(newPlan => {
+            if (newPlan) {
+              console.log('Plan created successfully:', newPlan.id);
+              setActivePlan(newPlan);
+              window.dispatchEvent(new CustomEvent('planCreated'));
+            }
+          })
+          .catch(error => {
+            console.error('Error creating plan:', error);
+            setPlanError('Failed to create plan');
+          });
+      }
+    }
+  }, [message, isUser, currentNamespace, apiKeys, vectorDBConfig, setActivePlan]);
+
+  const handleExecuteNext = async () => {
+    if (!onHandlePlanAction) return;
+    setIsProcessingPlan(true);
+    setPlanError(null);
+    try {
+      await onHandlePlanAction('next', (isProcessing) => {
+        setIsProcessingPlan(isProcessing);
+      });
+    } catch (error) {
+      console.error('Error executing next step:', error);
+      setPlanError('Failed to execute next step');
+      setIsProcessingPlan(false);
+    }
+  };
+
+  const handleAutoExecute = async () => {
+    if (!onHandlePlanAction) return;
+    setIsProcessingPlan(true);
+    setPlanError(null);
+    try {
+      await onHandlePlanAction('auto', (isProcessing) => {
+        setIsProcessingPlan(isProcessing);
+      });
+    } catch (error) {
+      console.error('Error starting auto-pilot:', error);
+      setPlanError('Failed to start auto-pilot');
+      setIsProcessingPlan(false);
+    }
+  };
+
   return (
     <div className="max-w-[900px] mx-auto">
       <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -102,14 +180,7 @@ function ChatMessage({
                 ),
                 h1: ({children}) => <h1 className="text-2xl font-bold my-3 text-foreground">{children}</h1>,
                 h2: ({children}) => <h2 className="text-xl font-bold my-2 text-foreground">{children}</h2>,
-                h3: ({children}) => <h3 className="text-lg font-bold my-2 text-foreground">{children}</h3>,
-                em: ({children}) => <em className="italic text-foreground/90">{children}</em>,
-                strong: ({children}) => <strong className="font-bold text-foreground">{children}</strong>,
-                blockquote: ({children}) => (
-                  <blockquote className="border-l-4 border-primary/20 pl-4 my-2 italic text-foreground">
-                    {children}
-                  </blockquote>
-                ),
+                h3: ({children}) => <h3 className="text-lg font-bold my-2 text-foreground">{children}</h3>
               }}
             >
               {message.content}
@@ -125,18 +196,47 @@ function ChatMessage({
               </pre>
             </div>
           ))}
+          {showControls && !isUser && onHandlePlanAction && (
+            <div className="mt-4 border-t dark:border-gray-700 pt-4">
+              {planError && (
+                <div className="mb-4 p-2 text-sm text-red-500 bg-red-100 dark:bg-red-900/20 rounded">
+                  {planError}
+                </div>
+              )}
+              <PlanControlPanel 
+                onExecuteNext={handleExecuteNext}
+                onAutoExecute={handleAutoExecute}
+                isProcessing={isProcessingPlan}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-interface ChatInputProps {
-  onSendMessage: (message: string) => void;
-  isLoading: boolean;
+function LoadingMessage() {
+  return (
+    <div className="max-w-[900px] mx-auto">
+      <div className="flex justify-start">
+        <div className="max-w-[80%] rounded-lg p-4 bg-background border dark:border-gray-700">
+          <div className="flex items-center gap-2 text-foreground">
+            <div className="animate-spin rounded-full h-4 w-4 
+                          border-2 border-muted-foreground
+                          border-t-transparent" />
+            <span>AI is thinking...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
+function ChatInput({ onSendMessage, isLoading }: { 
+  onSendMessage: (message: string) => void;
+  isLoading: boolean;
+}) {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -158,6 +258,9 @@ function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
     if (message.trim() && !isLoading) {
       onSendMessage(message);
       setMessage('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
     }
   };
 
@@ -178,6 +281,9 @@ function ChatInput({ onSendMessage, isLoading }: ChatInputProps) {
                 if (message.trim() && !isLoading) {
                   onSendMessage(message);
                   setMessage('');
+                  if (textareaRef.current) {
+                    textareaRef.current.style.height = 'auto';
+                  }
                 }
               }
             }}
@@ -257,39 +363,25 @@ function ModelSelector({
   );
 }
 
-function LoadingMessage() {
-  return (
-    <div className="max-w-[900px] mx-auto">
-      <div className="flex justify-start">
-        <div className="max-w-[80%] rounded-lg p-4 bg-background border dark:border-gray-700">
-          <div className="flex items-center gap-2 text-foreground">
-            <div className="animate-spin rounded-full h-4 w-4 
-                          border-2 border-muted-foreground
-                          border-t-transparent" />
-            <span>AI is thinking...</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Chat({ 
+export function Chat({ 
   messages, 
   isLoading, 
   error, 
   onSendMessage,
   hasApiKey,
   onCodeBlockSelect,
-  selectedCodeBlockId,
-  currentNamespace
+  selectedCodeBlockId
 }: ChatProps) {
   const [mounted, setMounted] = useState(false);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [modelError, setModelError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  
   const { activePlan } = useCurrentProject();
+  const vectorDBConfig = useChatStore((state) => state.vectorDBConfig);
+  const apiKeys = useChatStore((state) => state.apiKeys);
+  const setActivePlan = useChatStore((state) => state.setActivePlan);
 
   const scrollToBottom = useCallback(() => {
     if (scrollTimeoutRef.current) {
@@ -331,6 +423,7 @@ function Chat({
   }, [messages.length, mounted, scrollToBottom]);
 
   const handleSendMessage = useCallback((content: string) => {
+    console.log('Sending message:', content);
     if (!selectedModel) {
       setModelError('Please select a model first');
       return;
@@ -344,6 +437,72 @@ function Chat({
     setModelError(null);
     onSendMessage(content, selectedModel);
   }, [selectedModel, hasApiKey, onSendMessage]);
+
+  const handlePlanAction = useCallback(async (
+    action: 'next' | 'auto', 
+    messageContent: string,
+    setProcessing: (isProcessing: boolean) => void
+  ) => {
+    console.log('Plan action triggered');
+    
+    if (!selectedModel) {
+      setModelError('Please select a model first');
+      return;
+    }
+
+    try {
+      // Immediately send instruction based on action type
+      if (action === 'next') {
+        if (activePlan) {
+          const nextStep = activePlan.steps.find(step => step.status === 'pending');
+          if (nextStep) {
+            console.log('Sending next step instruction:', nextStep.title);
+            handleSendMessage(`Please proceed with step "${nextStep.title}" of the plan.`);
+          } else {
+            throw new Error('No remaining steps to execute');
+          }
+        } else {
+          console.log('Sending first step instruction');
+          handleSendMessage('Please proceed with the first step of the plan.');
+        }
+      } else {
+        console.log('Sending auto-pilot instruction');
+        handleSendMessage(
+          `Please execute the entire plan automatically. After each step, mark it as completed ` +
+          `and proceed to the next step until all steps are done. Provide updates on progress.`
+        );
+      }
+
+      // Process plan in background if needed
+      if (activePlan) {
+        const updatedPlan = { ...activePlan };
+        const nextStep = updatedPlan.steps.find(step => step.status === 'pending');
+        if (nextStep) {
+          console.log('Updating step status:', nextStep.title);
+          nextStep.status = 'in_progress';
+          nextStep.updated = new Date().toISOString();
+          updatedPlan.updated = new Date().toISOString();
+          try {
+            await updatePlan(updatedPlan, {
+              apiKeys,
+              vectordb: vectorDBConfig,
+              embedding: { provider: 'voyage' as const }
+            });
+            setActivePlan(updatedPlan);
+          } catch (error) {
+            console.error('Error updating plan:', error);
+            // Continue even if plan update fails
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error('Error in plan action:', error);
+      throw error;
+    } finally {
+      setProcessing(false);
+    }
+  }, [selectedModel, activePlan, handleSendMessage, apiKeys, vectorDBConfig, setActivePlan]);
 
   if (!mounted) return null;
 
@@ -365,6 +524,19 @@ function Chat({
             message={message}
             isUser={message.role === 'user'}
             onCodeBlockSelect={onCodeBlockSelect}
+            onHandlePlanAction={(action, setProcessing) => {
+              console.log('Plan action requested:', action);
+              setProcessing(true);
+              handlePlanAction(action, message.content, setProcessing)
+                .catch(error => {
+                  console.error('Error in plan action:', error);
+                  setModelError(error instanceof Error ? error.message : 'Failed to execute plan action');
+                })
+                .finally(() => {
+                  console.log('Plan action completed');
+                  setProcessing(false);
+                });
+            }}
           />
         ))}
         {isLoading && <LoadingMessage />}
@@ -388,4 +560,4 @@ function Chat({
   );
 }
 
-export { Chat, type ChatProps, type Model };
+export { type Model };
