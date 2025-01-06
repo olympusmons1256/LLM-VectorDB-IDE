@@ -66,16 +66,23 @@ export function FileTypeFilter() {
 
   return (
     <div className="mb-4">
-      <label className="block text-sm font-medium mb-2">Show</label>
+      <label className="block text-sm font-medium text-foreground mb-2">Show</label>
       <select
         value={selectedType || ''}
         onChange={(e) => setSelectedType(e.target.value || null)}
-        className="w-full p-2 rounded-lg border dark:border-gray-700 bg-white dark:bg-gray-800"
+        className="w-full p-2 rounded-lg border dark:border-gray-700 
+                 bg-background text-foreground
+                 focus:outline-none focus:ring-1 focus:ring-primary
+                 transition-colors"
       >
         {fileTypes.map(type => {
           const count = categoryCounts[type.category || type.value] || 0;
           return (
-            <option key={type.value} value={type.value}>
+            <option 
+              key={type.value} 
+              value={type.value} 
+              className="bg-background text-foreground"
+            >
               {type.label} ({count})
             </option>
           );

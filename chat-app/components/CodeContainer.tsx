@@ -1,4 +1,3 @@
-// components/CodeContainer.tsx
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -64,7 +63,6 @@ function CodeBlockGroup({
 
   const getHighlightedCode = (code: string) => {
     if (!searchTerm) return code;
-    
     const regex = new RegExp(searchTerm, 'gi');
     return code.replace(regex, match => `••${match}••`);
   };
@@ -77,13 +75,13 @@ function CodeBlockGroup({
     <div 
       ref={blockRef}
       className={cn(
-        "border dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800",
+        "border dark:border-gray-700 rounded-lg bg-background",
         isHighlighted && "ring-2 ring-blue-500"
       )}
     >
       <div className="flex items-center justify-between p-3 border-b dark:border-gray-700">
         <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4" />
+          <Terminal className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm">
             {title && (
               <span className="font-medium text-blue-500 dark:text-blue-400 mr-1">
@@ -94,7 +92,7 @@ function CodeBlockGroup({
           </span>
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            className="p-1 hover:bg-accent rounded"
           >
             {isCollapsed ? (
               <ChevronDown className="h-4 w-4" />
@@ -106,7 +104,7 @@ function CodeBlockGroup({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsSearching(!isSearching)}
-            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            className="p-1.5 hover:bg-accent rounded"
             title="Search in code"
           >
             <Search className="h-4 w-4" />
@@ -114,7 +112,7 @@ function CodeBlockGroup({
           {blocks[0]?.metadata?.linkedMessageId && (
             <button
               onClick={() => onSelect?.(blocks[0].id)}
-              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-blue-500"
+              className="p-1.5 hover:bg-accent rounded text-blue-500"
               title="Go to reference in chat"
             >
               <Link className="h-4 w-4" />
@@ -123,7 +121,7 @@ function CodeBlockGroup({
           {blocks[0]?.metadata?.path && (
             <button
               onClick={() => {/* Open in editor */}}
-              className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+              className="p-1.5 hover:bg-accent rounded"
               title="Open in editor"
             >
               <ExternalLink className="h-4 w-4" />
@@ -131,7 +129,7 @@ function CodeBlockGroup({
           )}
           <button
             onClick={copyToClipboard}
-            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            className="p-1.5 hover:bg-accent rounded"
             title="Copy all blocks"
           >
             {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
@@ -146,7 +144,7 @@ function CodeBlockGroup({
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Search in code..."
-            className="w-full p-1 text-sm border rounded dark:border-gray-600 dark:bg-gray-700"
+            className="w-full p-1 text-sm border rounded dark:border-gray-600 bg-background"
           />
         </div>
       )}
@@ -157,16 +155,16 @@ function CodeBlockGroup({
             <div key={blockIndex} className="p-4 overflow-x-auto">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500">{block.language}</span>
+                  <span className="text-xs text-muted-foreground">{block.language}</span>
                   {block.metadata?.filename && (
-                    <span className="text-xs text-gray-400">{block.metadata.filename}</span>
+                    <span className="text-xs text-muted-foreground">{block.metadata.filename}</span>
                   )}
                 </div>
                 <button
                   onClick={async () => {
                     await navigator.clipboard.writeText(block.code);
                   }}
-                  className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                  className="p-1 hover:bg-accent rounded"
                   title="Copy block"
                 >
                   <Copy className="h-3 w-3" />
@@ -180,7 +178,7 @@ function CodeBlockGroup({
               >
                 {({ style, tokens, getLineProps, getTokenProps }) => (
                   <pre 
-                    style={style} 
+                    style={{...style, background: 'transparent'}} 
                     className="text-sm font-mono relative"
                   >
                     {tokens.map((line, i) => {
@@ -191,7 +189,7 @@ function CodeBlockGroup({
                       return (
                         <div key={i} className="relative group">
                           <div {...getLineProps({ line })} className="flex">
-                            <span className="select-none inline-block w-8 text-right mr-4 text-gray-500">
+                            <span className="select-none inline-block w-8 text-right mr-4 text-muted-foreground">
                               {lineNumber}
                             </span>
                             <span>
@@ -228,7 +226,6 @@ export function CodeContainer({
   highlightedBlockId,
   annotations = []
 }: CodeContainerProps) {
-  // Group code blocks by planId and extract plan titles
   const groupedBlocks = messages.reduce<Array<{
     blocks: CodeBlock[];
     planId?: string;
@@ -237,7 +234,6 @@ export function CodeContainer({
   }>>((groups, msg) => {
     if (!msg.tools?.length) return groups;
 
-    // Check for plan creation in the message
     const planMatch = msg.content.match(/## Plan:\s*([^\n]+)/);
     if (planMatch) {
       const planId = msg.id;
@@ -268,14 +264,14 @@ export function CodeContainer({
 
   if (groupedBlocks.length === 0) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-muted-foreground">
         <p>No code blocks yet</p>
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-y-auto p-4 space-y-4">
+    <div className="h-full overflow-y-auto p-4 space-y-4 bg-background">
       {groupedBlocks.map((group, index) => (
         <CodeBlockGroup
           key={group.messageId || index}

@@ -31,14 +31,14 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
   if (loadingState.isLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-full">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-500 mb-3" />
-        <div className="text-sm text-gray-600 dark:text-gray-400">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-3" />
+        <div className="text-sm text-muted-foreground">
           {loadingState.status}
         </div>
         {loadingState.progress !== undefined && (
-          <div className="w-48 h-1 bg-gray-200 dark:bg-gray-700 rounded-full mt-2">
+          <div className="w-48 h-1 bg-muted rounded-full mt-2">
             <div 
-              className="h-full bg-blue-500 rounded-full transition-all duration-300"
+              className="h-full bg-primary rounded-full transition-all duration-300"
               style={{ width: `${loadingState.progress}%` }}
             />
           </div>
@@ -49,7 +49,7 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   if (loadingState.error) {
     return (
-      <div className="flex items-center justify-center h-full text-red-500">
+      <div className="flex items-center justify-center h-full text-destructive">
         {loadingState.error}
       </div>
     );
@@ -57,7 +57,7 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   if (sortedDocs.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         No documents found{selectedType ? ` in ${selectedType}` : ''}
       </div>
     );
@@ -65,13 +65,13 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-2 flex-shrink-0">
-        <span className="text-sm text-gray-500">
+      <div className="flex items-center justify-between px-4 py-2 flex-shrink-0 border-b dark:border-gray-700">
+        <span className="text-sm text-muted-foreground">
           {sortedDocs.length} document{sortedDocs.length === 1 ? '' : 's'}
         </span>
         <button
           onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-          className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           Sort: {sortOrder === 'asc' ? 'Oldest First' : 'Newest First'}
         </button>

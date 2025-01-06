@@ -13,6 +13,8 @@ import { useChatStore, useCurrentProject } from '@/store/chat-store';
 import type { LayoutMode } from '@/components/layout/types';
 import type { Model } from '@/types/message';
 
+const HEADER_HEIGHT = '48px';
+
 interface Config {
   embedding: {
     provider: 'voyage';
@@ -70,9 +72,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     const savedLayout = localStorage.getItem('layout-mode');
-    if (savedLayout) {
-      setLayoutMode(savedLayout as LayoutMode);
-    }
+    setLayoutMode(savedLayout as LayoutMode || 'default');
   }, []);
 
   const handleLayoutChange = (mode: LayoutMode) => {
@@ -89,7 +89,7 @@ export default function ChatPage() {
       case 'stacked':
         return 'grid grid-rows-[1fr,auto] max-w-[900px]';
       default:
-          return 'grid grid-cols-[600px,minmax(0,1fr),600px] max-w-[2100px]';
+        return 'grid grid-cols-[600px,minmax(0,1fr),600px] max-w-[2100px]';
     }
   };
 
@@ -150,38 +150,38 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="h-screen flex flex-col">
-      <LayoutCustomizer onLayoutChange={handleLayoutChange} currentLayout={layoutMode} />
-      
-      {/* Top bar */}
-      <div className="flex items-center justify-between h-12 px-4 border-b dark:border-gray-700">
-        <div className="flex items-center gap-4">
-          <Menu className="h-5 w-5 cursor-pointer" onClick={() => setSidebarOpen(!sidebarOpen)} />
-          <div className="flex items-center gap-2">
-            <span className="font-medium">simplifIDE</span>
-            {currentNamespace && (
-              <span className="text-sm text-muted-foreground">/ {currentNamespace}</span>
-            )}
+    <div className="h-screen flex flex-col overflow-hidden">
+      <div className="flex-none" style={{ height: HEADER_HEIGHT }}>
+        <div className="flex items-center justify-between h-full px-4 border-b dark:border-gray-700 bg-background">
+          <div className="flex items-center gap-4">
+            <Menu className="h-5 w-5 cursor-pointer" onClick={() => setSidebarOpen(!sidebarOpen)} />
+            <div className="flex items-center gap-2">
+              <span className="font-medium">simplifIDE</span>
+              {currentNamespace && (
+                <span className="text-sm text-muted-foreground">/ {currentNamespace}</span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="p-2 hover:bg-accent rounded-md"
-          >
-            {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 hover:bg-accent rounded-md"
-          >
-            <Settings className="h-5 w-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <LayoutCustomizer onLayoutChange={handleLayoutChange} currentLayout={layoutMode} />
+            <div className="w-px h-6 bg-gray-200 dark:bg-gray-700" />
+            <button 
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="p-2 hover:bg-accent rounded-md"
+            >
+              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2 hover:bg-accent rounded-md"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Main layout */}
-      <div className={`flex-1 p-4 ${getLayoutClasses()} gap-4 overflow-hidden mx-auto`}>
+      <div className={`flex-1 p-4 ${getLayoutClasses()} gap-4 mx-auto`}>
         {/* Left sidebar - Document Manager */}
         <div className="w-full min-w-0 flex">
           <DocumentSidebar 
@@ -195,7 +195,7 @@ export default function ChatPage() {
 
         {/* Chat area */}
         <div className="min-w-0 flex justify-center">
-          <div className="w-full max-w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg">
+          <div className="w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg bg-background">
             {activePlan && (
               <div className="px-4 py-2 text-sm border-b dark:border-gray-700">
                 Active Plan: <span className="font-medium">{activePlan.title}</span>

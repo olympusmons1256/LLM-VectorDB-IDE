@@ -1,4 +1,3 @@
-// components/layout/LayoutCustomizer.tsx
 'use client';
 
 import { Columns, MonitorSmartphone, LayoutDashboard, Monitor } from 'lucide-react';
@@ -35,28 +34,26 @@ const LAYOUT_OPTIONS = [
 
 export function LayoutCustomizer({ onLayoutChange, currentLayout }: LayoutCustomizerProps) {
   return (
-    <div className="fixed top-0 right-4 z-50 bg-background border dark:border-gray-700 rounded-b-lg shadow-lg">
-      <TooltipProvider>
-        <div className="flex p-1 gap-1">
-          {LAYOUT_OPTIONS.map(({ id, icon: Icon, label }) => (
-            <Tooltip key={id}>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => onLayoutChange(id as LayoutMode)}
-                  className={`p-1 h-8 w-8 rounded-md flex items-center justify-center
-                             transition-colors hover:bg-accent
-                             ${currentLayout === id ? 'bg-accent text-accent-foreground' : ''}`}
-                >
-                  <Icon className="h-4 w-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" align="center">
-                {label}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-      </TooltipProvider>
-    </div>
+    <TooltipProvider>
+      <div className="flex p-1 gap-1">
+        {LAYOUT_OPTIONS.map(({ id, icon: Icon, label }) => (
+          <Tooltip key={id}>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => onLayoutChange(id as LayoutMode)}
+                className={`p-1 h-8 w-8 rounded-md flex items-center justify-center
+                           transition-colors hover:bg-accent
+                           ${currentLayout === id ? 'bg-accent text-accent-foreground' : ''}`}
+              >
+                <Icon className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center">
+              {label}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </TooltipProvider>
   );
 }
