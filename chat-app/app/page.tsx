@@ -83,13 +83,13 @@ export default function ChatPage() {
   const getLayoutClasses = () => {
     switch (layoutMode) {
       case 'compact':
-        return 'grid grid-cols-[200px,1fr,200px]';
+        return 'grid grid-cols-[400px,1fr,400px] max-w-[1700px]';
       case 'wide':
-        return 'grid grid-cols-[300px,1fr,300px]';
+        return 'grid grid-cols-[700px,1fr,700px] max-w-[2300px]';
       case 'stacked':
-        return 'grid grid-rows-[1fr,auto] max-w-[1200px] mx-auto';
+        return 'grid grid-rows-[1fr,auto] max-w-[900px]';
       default:
-        return 'grid grid-cols-[280px,1fr,280px] max-w-[1400px] mx-auto';
+          return 'grid grid-cols-[600px,minmax(0,1fr),600px] max-w-[2100px]';
     }
   };
 
@@ -181,19 +181,21 @@ export default function ChatPage() {
       </div>
 
       {/* Main layout */}
-      <div className={`flex-1 p-4 ${getLayoutClasses()} gap-4 overflow-hidden`}>
-        {/* Left sidebar */}
-        <DocumentSidebar 
-          config={getConfig()}
-          onError={setError}
-          onNamespaceChange={setCurrentNamespace}
-          currentNamespace={currentNamespace}
-          visible={sidebarOpen}
-        />
+      <div className={`flex-1 p-4 ${getLayoutClasses()} gap-4 overflow-hidden mx-auto`}>
+        {/* Left sidebar - Document Manager */}
+        <div className="w-full min-w-0 flex">
+          <DocumentSidebar 
+            config={getConfig()}
+            onError={setError}
+            onNamespaceChange={setCurrentNamespace}
+            currentNamespace={currentNamespace}
+            visible={sidebarOpen}
+          />
+        </div>
 
         {/* Chat area */}
-        <div className="w-full flex justify-center">
-          <div className="flex-1 flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg max-w-[900px]">
+        <div className="min-w-0 flex justify-center">
+          <div className="w-full max-w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg">
             {activePlan && (
               <div className="px-4 py-2 text-sm border-b dark:border-gray-700">
                 Active Plan: <span className="font-medium">{activePlan.title}</span>
@@ -209,8 +211,8 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Right sidebar */}
-        <div className="flex flex-col overflow-hidden">
+        {/* Right sidebar - Code and Plans */}
+        <div className="w-full min-w-0 flex flex-col overflow-hidden">
           <div className="flex-1 border-b dark:border-gray-700 overflow-auto">
             <CodeContainer messages={messages} />
           </div>

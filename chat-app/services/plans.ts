@@ -149,10 +149,7 @@ export async function getActivePlans(
         text: 'list all plans',
         namespace,
         filter: { 
-          $and: [
-            { type: { $eq: 'plan' } },
-            { isComplete: { $eq: true } }
-          ]
+          type: { $eq: 'plan' }
         }
       })
     });
@@ -256,30 +253,6 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   try {
     console.log('Storing plan:', plan.id);
     
-    // Delete any existing plan documents
-    const deleteResponse = await fetch('/api/vector', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: 'delete_document',
-        config,
-        namespace: plan.namespace,
-        filter: { 
-          $and: [
-            { type: { $eq: 'plan' } },
-            { planId: { $eq: plan.id } }
-          ]
-        }
-      })
-    });
-
-    if (!deleteResponse.ok) {
-      console.warn('Warning: Failed to delete existing plan');
-    }
-
-    // Wait for deletion to complete
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
     const planText = JSON.stringify(plan);
     const metadata = {
       filename: `plan-${plan.id}.json`,
@@ -310,29 +283,8 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
       throw new Error('Failed to store plan');
     }
 
-    // Verify storage
+    // Wait for indexing
     await new Promise(resolve => setTimeout(resolve, 2000));
-    const verifyResponse = await fetch('/api/vector', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: 'query_context',
-        config,
-        text: plan.title,
-        namespace: plan.namespace,
-        filter: {
-          $and: [
-            { type: { $eq: 'plan' } },
-            { planId: { $eq: plan.id } }
-          ]
-        }
-      })
-    });
-
-    const data = await verifyResponse.json();
-    if (!data.matches?.length) {
-      throw new Error('Failed to verify plan storage');
-    }
 
   } catch (error) {
     console.error('Error storing plan:', error);
