@@ -42,18 +42,6 @@ export interface PlanStep {
   };
 }
 
-interface PlanCache {
-  plans: Map<string, Plan[]>;
-  timestamps: Map<string, number>;
-}
-
-const planCache: PlanCache = {
-  plans: new Map(),
-  timestamps: new Map()
-};
-
-const CACHE_DURATION = 30000; // 30 seconds
-
 function generateUniqueId(prefix: string): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
@@ -61,20 +49,96 @@ function generateUniqueId(prefix: string): string {
   return `${prefix}-${timestamp}-${random}-${counter}`;
 }
 
+function extractPlanDetails(content: string): { title: string; details: string } | null {
+  console.log('Extracting plan from content');
+
+  // Try explicit plan patterns first
+  const patterns = [
+    /## Plan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /\bPlan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /Here(?:'s| is) (?:the |a )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /Let(?:'s| us) (create |make |implement |develop )(?:a |the )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      const title = match[1].trim();
+      const details = match[2]?.trim() || content.trim();
+      if (details) {
+        console.log('Found plan with explicit pattern:', { title });
+        return { title, details };
+      }
+    }
+  }
+
+  // Look for numbered lists as a fallback
+  const numberedListMatch = content.match(/(?:^|\n)\s*1\.\s+([^\n]+)(?:\n[\s\S]*)/);
+  if (numberedListMatch) {
+    const firstLine = numberedListMatch[1].trim();
+    const details = content.trim();
+    console.log('Found numbered list plan:', { firstLine });
+    return {
+      title: `Plan: ${firstLine}`,
+      details
+    };
+  }
+
+  console.log('No plan format found');
+  return null;
+}
+
+function extractSteps(content: string): PlanStep[] {
+  const stepPattern = /(?:^|\n)\s*(\d+)\.?\s*([^\n]+)(?:\n(?:\s*[-•].+\n?)*)?/gm;
+  const steps: PlanStep[] = [];
+  const timestamp = new Date().toISOString();
+  
+  let match;
+  while ((match = stepPattern.exec(content)) !== null) {
+    const [fullMatch, number, title] = match;
+    
+    const bulletPoints = fullMatch.match(/\s*[-•]\s*([^\n]+)/g) || [];
+    const description = bulletPoints
+      .map(point => point.replace(/^\s*[-•]\s*/, '').trim())
+      .join('\n');
+    
+    const stepId = generateUniqueId('step');
+    console.log('Found step:', { number, title: title.trim(), id: stepId });
+
+    steps.push({
+      id: stepId,
+      title: title.trim(),
+      description: description || '',
+      status: 'pending',
+      dependencies: [],
+      created: timestamp,
+      updated: timestamp,
+      metadata: {
+        estimatedTime: extractEstimatedTime(fullMatch),
+        affectedFiles: extractAffectedFiles(fullMatch),
+        commands: extractCommands(fullMatch),
+        tests: extractTests(fullMatch),
+        rollback: extractRollback(fullMatch)
+      }
+    });
+  }
+
+  // Add dependencies between consecutive steps
+  steps.forEach((step, index) => {
+    if (index > 0) {
+      step.dependencies.push(steps[index - 1].id);
+    }
+  });
+
+  return steps;
+}
+
 export async function getActivePlans(
   config: EmbeddingConfig,
   namespace: string
 ): Promise<Plan[]> {
   try {
-    console.log('Fetching active plans for namespace:', namespace);
-
-    // Check cache first
-    const cachedPlans = planCache.plans.get(namespace);
-    const cachedTimestamp = planCache.timestamps.get(namespace);
-    if (cachedPlans && cachedTimestamp && Date.now() - cachedTimestamp < CACHE_DURATION) {
-      console.log('Returning cached plans');
-      return cachedPlans;
-    }
+    console.log('Fetching plans for namespace:', namespace);
 
     const response = await fetch('/api/vector', {
       method: 'POST',
@@ -86,8 +150,8 @@ export async function getActivePlans(
         namespace,
         filter: { 
           $and: [
-            { 'metadata.type': { $eq: 'plan' } },
-            { 'metadata.section': { $eq: 'plans' } }
+            { type: { $eq: 'plan' } },
+            { isComplete: { $eq: true } }
           ]
         }
       })
@@ -98,27 +162,25 @@ export async function getActivePlans(
     }
 
     const data = await response.json();
+    console.log('Received plans data:', data);
+    
     const plans = data.matches
       ?.filter((match: any) => match.metadata?.plan)
       .map((match: any) => {
         try {
-          const plan = JSON.parse(match.metadata.plan);
-          console.log('Parsed plan:', plan.id, plan.title);
-          return validatePlan(plan);
+          return JSON.parse(match.metadata.plan);
         } catch (e) {
           console.error('Error parsing plan:', e);
           return null;
         }
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort((a: Plan, b: Plan) => 
+        new Date(b.updated).getTime() - new Date(a.updated).getTime()
+      );
 
-    // Update cache
-    if (plans) {
-      planCache.plans.set(namespace, plans);
-      planCache.timestamps.set(namespace, Date.now());
-    }
-
-    return plans || [];
+    console.log('Parsed plans:', plans.length);
+    return plans;
 
   } catch (error: any) {
     console.error('Error fetching plans:', error);
@@ -133,113 +195,143 @@ export async function createPlan(
 ): Promise<Plan | null> {
   try {
     console.log('Creating plan from content');
-    // Add more detailed plan detection
-    const planMatch = content.match(/(?:## Plan:?|Plan:)\s*([^\n]+)\n([\s\S]*?)(?=\n#|$)/i);
-    if (!planMatch) {
-      console.log('No plan format found in content');
+    const planDetails = extractPlanDetails(content);
+    if (!planDetails) {
+      console.log('No valid plan format found');
       return null;
     }
 
-    const [, title, details] = planMatch;
-    console.log('Extracted plan title:', title);
-    
+    console.log('Extracted plan details:', {
+      title: planDetails.title,
+      detailsLength: planDetails.details.length
+    });
+
+    const { title, details } = planDetails;
     const steps = extractSteps(details);
     if (steps.length === 0) {
       console.log('No steps found in plan');
       return null;
     }
 
+    const planId = generateUniqueId('plan');
+    const timestamp = new Date().toISOString();
+
     const plan: Plan = {
-      id: generateUniqueId('plan'),
+      id: planId,
       title: title.trim(),
       description: details.trim(),
       steps,
       status: 'active',
-      created: new Date().toISOString(),
-      updated: new Date().toISOString(),
+      created: timestamp,
+      updated: timestamp,
       namespace,
       type: detectPlanType(title, details),
       metadata: {
-        ...extractMetadata(details),
         sourceMessage: content,
         complexity: detectComplexity(details),
-        priority: detectPriority(details)
+        priority: detectPriority(details),
+        ...extractMetadata(details)
       }
     };
 
-    // Ensure plan is stored before returning
+    console.log('Created plan:', {
+      id: plan.id,
+      title: plan.title,
+      steps: steps.length
+    });
+
     await storePlan(plan, config);
-    console.log('Plan stored successfully:', plan.id);
+    console.log('Plan stored successfully');
 
-    // Invalidate cache
-    planCache.plans.delete(namespace);
-    planCache.timestamps.delete(namespace);
-    
-    // Trigger events after successful storage
-    window.dispatchEvent(new CustomEvent('planCreated'));
-    window.dispatchEvent(new CustomEvent('planUpdated'));
-
+    window.dispatchEvent(new CustomEvent('planCreated', { detail: plan }));
     return plan;
+
   } catch (error) {
     console.error('Error creating plan:', error);
-    return null;
+    throw error;
   }
 }
 
 async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
-  const planText = JSON.stringify(plan);
-
   try {
     console.log('Storing plan:', plan.id);
     
-    // Add a delay to ensure proper indexing
+    // Delete any existing plan documents
+    const deleteResponse = await fetch('/api/vector', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'delete_document',
+        config,
+        namespace: plan.namespace,
+        filter: { 
+          $and: [
+            { type: { $eq: 'plan' } },
+            { planId: { $eq: plan.id } }
+          ]
+        }
+      })
+    });
+
+    if (!deleteResponse.ok) {
+      console.warn('Warning: Failed to delete existing plan');
+    }
+
+    // Wait for deletion to complete
     await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const response = await fetch('/api/vector', {
+
+    const planText = JSON.stringify(plan);
+    const metadata = {
+      filename: `plan-${plan.id}.json`,
+      type: 'plan',
+      planId: plan.id,
+      status: plan.status,
+      plan: planText,
+      isComplete: true,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('Storing plan with metadata:', metadata);
+
+    const storeResponse = await fetch('/api/vector', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         operation: 'process_document',
         config,
         text: planText,
-        filename: `plan-${plan.id}.json`,
+        filename: metadata.filename,
         namespace: plan.namespace,
-        metadata: {
-          filename: `plan-${plan.id}.json`,
-          type: 'plan',
-          section: 'plans',
-          planId: plan.id,
-          status: plan.status,
-          plan: planText,
-          isComplete: true,
-          timestamp: new Date().toISOString()
-        }
+        metadata
       })
     });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to store plan');
+    if (!storeResponse.ok) {
+      throw new Error('Failed to store plan');
     }
 
-    // Add additional delay for indexing
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
     // Verify storage
+    await new Promise(resolve => setTimeout(resolve, 2000));
     const verifyResponse = await fetch('/api/vector', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         operation: 'query_context',
         config,
-        text: `plan-${plan.id}.json`,
+        text: plan.title,
         namespace: plan.namespace,
-        filter: { 'metadata.planId': { $eq: plan.id } }
+        filter: {
+          $and: [
+            { type: { $eq: 'plan' } },
+            { planId: { $eq: plan.id } }
+          ]
+        }
       })
     });
 
-    if (!verifyResponse.ok || !(await verifyResponse.json()).matches?.length) {
-      throw new Error('Plan storage verification failed');
+    const data = await verifyResponse.json();
+    if (!data.matches?.length) {
+      throw new Error('Failed to verify plan storage');
     }
 
   } catch (error) {
@@ -248,34 +340,22 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   }
 }
 
+export async function updatePlan(
+  plan: Plan,
+  config: EmbeddingConfig
+): Promise<void> {
+  console.log('Updating plan:', plan.id);
+  plan.updated = new Date().toISOString();
+  await storePlan(plan, config);
+  window.dispatchEvent(new CustomEvent('planUpdated', { detail: plan }));
+}
+
 export async function deletePlan(
   plan: Plan,
   config: EmbeddingConfig
 ): Promise<void> {
   try {
     console.log('Deleting plan:', plan.id);
-
-    // First verify the plan exists
-    const verifyResponse = await fetch('/api/vector', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: 'query_context',
-        config,
-        text: `plan-${plan.id}.json`,
-        namespace: plan.namespace,
-        filter: { 'metadata.planId': { $eq: plan.id } }
-      })
-    });
-
-    if (!verifyResponse.ok) {
-      throw new Error('Failed to verify plan existence');
-    }
-
-    const verifyData = await verifyResponse.json();
-    if (!verifyData.matches?.length) {
-      throw new Error('Plan not found');
-    }
 
     const response = await fetch('/api/vector', {
       method: 'POST',
@@ -286,8 +366,8 @@ export async function deletePlan(
         namespace: plan.namespace,
         filter: {
           $and: [
-            { 'metadata.type': { $eq: 'plan' } },
-            { 'metadata.planId': { $eq: plan.id } }
+            { type: { $eq: 'plan' } },
+            { planId: { $eq: plan.id } }
           ]
         }
       })
@@ -297,104 +377,12 @@ export async function deletePlan(
       throw new Error('Failed to delete plan');
     }
     
-    // Invalidate cache
-    planCache.plans.delete(plan.namespace);
-    planCache.timestamps.delete(plan.namespace);
-    
-    window.dispatchEvent(new CustomEvent('planUpdated'));
+    window.dispatchEvent(new CustomEvent('planDeleted', { detail: plan.id }));
+
   } catch (error: any) {
     console.error('Error deleting plan:', error);
     throw error;
   }
-}
-
-export async function updatePlan(
-  plan: Plan,
-  config: EmbeddingConfig
-): Promise<void> {
-  console.log('Updating plan:', plan.id);
-  
-  // Validate plan before update
-  const validatedPlan = validatePlan(plan);
-  if (!validatedPlan) {
-    throw new Error('Invalid plan structure');
-  }
-
-  validatedPlan.updated = new Date().toISOString();
-  await storePlan(validatedPlan, config);
-  
-  // Invalidate cache
-  planCache.plans.delete(plan.namespace);
-  planCache.timestamps.delete(plan.namespace);
-  
-  window.dispatchEvent(new CustomEvent('planUpdated'));
-}
-
-function validatePlan(plan: any): Plan | null {
-  if (!plan.id || !plan.title || !Array.isArray(plan.steps)) {
-    console.error('Invalid plan structure:', plan);
-    return null;
-  }
-
-  // Ensure all steps have required fields
-  plan.steps = plan.steps.map(step => ({
-    id: step.id || generateUniqueId('step'),
-    title: step.title,
-    description: step.description || '',
-    status: step.status || 'pending',
-    dependencies: Array.isArray(step.dependencies) ? step.dependencies : [],
-    created: step.created || new Date().toISOString(),
-    updated: step.updated || new Date().toISOString(),
-    metadata: step.metadata || {}
-  })).filter(step => step.title);
-
-  return {
-    ...plan,
-    metadata: plan.metadata || {},
-    created: plan.created || new Date().toISOString(),
-    updated: plan.updated || new Date().toISOString(),
-    status: plan.status || 'active',
-    type: validatePlanType(plan.type)
-  };
-}
-
-function validatePlanType(type: string): Plan['type'] {
-  const validTypes: Plan['type'][] = ['refactor', 'feature', 'bug', 'other'];
-  return validTypes.includes(type as Plan['type']) ? type as Plan['type'] : 'other';
-}
-
-function extractSteps(content: string): PlanStep[] {
-  const stepMatches = content.matchAll(/(?:^|\n)(\d+)\.\s+([^\n]+)(?:\n([^1-9][^\n]+))?/g);
-  const steps: PlanStep[] = [];
-  const timestamp = new Date().toISOString();
-  
-  for (const match of stepMatches) {
-    const [, number, title, description = ''] = match;
-    steps.push({
-      id: generateUniqueId('step'),
-      title: title.trim(),
-      description: description.trim(),
-      status: 'pending',
-      dependencies: extractDependencies(description),
-      created: timestamp,
-      updated: timestamp,
-      metadata: {
-        affectedFiles: extractAffectedFiles(description),
-        commands: extractCommands(description),
-        tests: extractTests(description),
-        rollback: extractRollback(description)
-      }
-    });
-  }
-
-  // Add implicit dependencies based on order
-  steps.forEach((step, index) => {
-    if (index > 0 && !step.dependencies.includes(steps[index - 1].id)) {
-      step.dependencies.push(steps[index - 1].id);
-    }
-  });
-
-  return steps;
 }
 
 function detectPlanType(title: string, details: string): Plan['type'] {
@@ -403,7 +391,7 @@ function detectPlanType(title: string, details: string): Plan['type'] {
   if (text.includes('refactor') || text.includes('upgrade') || text.includes('migration')) {
     return 'refactor';
   }
-  if (text.includes('feature') || text.includes('implement') || text.includes('add')) {
+  if (text.includes('feature') || text.includes('implement') || text.includes('add') || text.includes('enhance')) {
     return 'feature';
   }
   if (text.includes('bug') || text.includes('fix') || text.includes('issue')) {
@@ -414,6 +402,7 @@ function detectPlanType(title: string, details: string): Plan['type'] {
 
 function detectComplexity(details: string): Plan['metadata']['complexity'] {
   const text = details.toLowerCase();
+  
   if (text.includes('complex') || text.includes('extensive') || text.includes('major')) {
     return 'high';
   }
@@ -437,18 +426,13 @@ function detectPriority(details: string): Plan['metadata']['priority'] {
 function extractMetadata(content: string): Plan['metadata'] {
   const metadata: Plan['metadata'] = {};
   
-  const versionMatch = content.match(/(?:version|upgrade to|migrate to)\s*([\w.-]+)/i);
-  if (versionMatch) {
-    metadata.targetVersion = versionMatch[1];
-  }
-
-  metadata.affectedFiles = extractAffectedFiles(content);
-
-  const timeMatch = content.match(/(?:estimated time|duration|takes?)\s*:?\s*(\d+\s*(?:min(?:ute)?|hour|day)s?)/i);
+  const timeMatch = content.match(/Estimated time:\s*(\d+(?:\s*(?:min(?:ute)?|hour|day)s?))/i);
   if (timeMatch) {
     metadata.estimatedTime = timeMatch[1];
   }
 
+  metadata.affectedFiles = extractAffectedFiles(content);
+  
   const tagMatches = content.matchAll(/(?:tags?|labels?|categories?):\s*([\w\s,#]+)(?:\n|$)/gi);
   const tags = new Set<string>();
   for (const match of tagMatches) {
@@ -471,38 +455,26 @@ function extractMetadata(content: string): Plan['metadata'] {
   if (dependencies.size > 0) {
     metadata.dependencies = Array.from(dependencies);
   }
- 
+
   return metadata;
- }
- 
- function extractDependencies(content: string): string[] {
-  if (!content) return [];
-  
-  const dependencies = new Set<string>();
-  const depMatches = content.matchAll(/(?:after|depends on|requires?|needs?)\s*([\w\s,]+)(?:\n|$)/gi);
-  
-  for (const match of depMatches) {
-    match[1].split(/[,\s]+/).forEach(dep => {
-      const cleanDep = dep.trim();
-      if (cleanDep) dependencies.add(cleanDep);
-    });
-  }
- 
-  return Array.from(dependencies);
- }
- 
- function extractAffectedFiles(content: string): string[] {
+}
+
+function extractEstimatedTime(content: string): string | undefined {
+  const timeMatch = content.match(/Estimated time:\s*([^\n]+)/);
+  return timeMatch ? timeMatch[1].trim() : undefined;
+}
+
+function extractAffectedFiles(content: string): string[] {
   if (!content) return [];
   
   const files = new Set<string>();
-  
   const patterns = [
     /`([^`]+\.[a-z]+)`/g,
     /(?:^|\s)([\w-]+\.[\w-]+)(?:\s|$)/gm,
     /(?:modify|update|create|file|in)\s+([^\s,]+\.[a-z]+)/gi,
     /([^`\s,]+\/[^`\s,]+\.[a-z]+)/g
   ];
- 
+
   patterns.forEach(pattern => {
     const matches = content.matchAll(pattern);
     for (const match of matches) {
@@ -511,15 +483,14 @@ function extractMetadata(content: string): Plan['metadata'] {
       }
     }
   });
- 
+
   return Array.from(files);
- }
- 
- function extractCommands(content: string): string[] {
+}
+
+function extractCommands(content: string): string[] {
   if (!content) return [];
   
   const commands = new Set<string>();
-  
   const patterns = [
     /`([^`]+)`/g,
     /(?:run|execute|using)\s+(\S+[^.\s]*)/g,
@@ -535,11 +506,11 @@ function extractMetadata(content: string): Plan['metadata'] {
       }
     }
   });
- 
+
   return Array.from(commands);
- }
- 
- function extractTests(content: string): string[] {
+}
+
+function extractTests(content: string): string[] {
   if (!content) return [];
   
   const tests = new Set<string>();
@@ -551,13 +522,52 @@ function extractMetadata(content: string): Plan['metadata'] {
       tests.add(test);
     }
   }
- 
+
   return Array.from(tests);
- }
- 
- function extractRollback(content: string): string | undefined {
+}
+
+function extractRollback(content: string): string | undefined {
   const rollbackMatch = content.match(/(?:rollback|revert):\s*([^.]+)/i);
   return rollbackMatch ? rollbackMatch[1].trim() : undefined;
- }
- 
- export type { PlanStep };
+}
+
+function validatePlan(plan: any): Plan | null {
+  if (!plan?.id || !plan?.title || !Array.isArray(plan?.steps)) {
+    console.error('Invalid plan structure:', plan);
+    return null;
+  }
+
+  const timestamp = new Date().toISOString();
+  const steps = plan.steps
+    .map(step => ({
+      id: step.id || generateUniqueId('step'),
+      title: step.title,
+      description: step.description || '',
+      status: step.status || 'pending',
+      dependencies: Array.isArray(step.dependencies) ? step.dependencies : [],
+      created: step.created || timestamp,
+      updated: step.updated || timestamp,
+      metadata: step.metadata || {}
+    }))
+    .filter(step => step.title);
+
+  if (steps.length === 0) {
+    console.error('No valid steps found in plan');
+    return null;
+  }
+
+  return {
+    ...plan,
+    steps,
+    metadata: plan.metadata || {},
+    created: plan.created || timestamp,
+    updated: plan.updated || timestamp,
+    status: plan.status || 'active',
+    type: validatePlanType(plan.type)
+  };
+}
+
+function validatePlanType(type: string): Plan['type'] {
+  const validTypes: Plan['type'][] = ['refactor', 'feature', 'bug', 'other'];
+  return validTypes.includes(type as Plan['type']) ? type as Plan['type'] : 'other';
+}

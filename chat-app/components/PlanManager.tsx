@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Plan, getActivePlans, updatePlan, deletePlan } from '@/services/plans';
-import { Check, Clock, AlertCircle, PlayCircle, PauseCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { Check, Clock, AlertCircle, PlayCircle, PauseCircle, RefreshCw, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import type { EmbeddingConfig } from '@/services/embedding';
 import {
   AlertDialog,
@@ -14,6 +14,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+interface BadgeProps {
+  children: React.ReactNode;
+  variant?: 'default' | 'destructive' | 'outline' | 'success';
+  className?: string;
+}
+
+const FallbackBadge = ({ children, variant = 'default', className = '' }: BadgeProps) => {
+  const baseClasses = 'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium';
+  const variantClasses = {
+    default: 'bg-primary/10 text-primary-foreground',
+    destructive: 'bg-destructive/10 text-destructive',
+    outline: 'border border-input',
+    success: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+  };
+  return (
+    <span className={`${baseClasses} ${variantClasses[variant]} ${className}`}>
+      {children}
+    </span>
+  );
+};
 
 interface PlanManagerProps {
   config: EmbeddingConfig;
@@ -35,26 +56,16 @@ export function PlanManager({
   const [planToDelete, setPlanToDelete] = useState<Plan | null>(null);
   const [isDeletingPlan, setIsDeletingPlan] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [expandedPlans, setExpandedPlans] = useState<Set<string>>(new Set());
 
   const refreshPlans = useCallback(async () => {
-    if (!currentNamespace) {
-      console.log('No namespace selected, skipping refresh');
-      return;
-    }
+    if (!currentNamespace) return;
 
-    console.log('Refreshing plans for namespace:', currentNamespace);
     setIsLoading(true);
     
     try {
       const activePlans = await getActivePlans(config, currentNamespace);
-      console.log('Fetched plans:', activePlans.length);
-      
-      // Sort plans by last updated timestamp
-      const sortedPlans = activePlans.sort((a, b) => 
-        new Date(b.updated).getTime() - new Date(a.updated).getTime()
-      );
-      
-      setPlans(sortedPlans);
+      setPlans(activePlans);
     } catch (error: any) {
       console.error('Error refreshing plans:', error);
       onError(error.message);
@@ -63,29 +74,22 @@ export function PlanManager({
     }
   }, [currentNamespace, config, onError]);
 
-  // Initial load when namespace changes
   useEffect(() => {
     if (currentNamespace) {
-      console.log('Initial load for namespace:', currentNamespace);
       refreshPlans();
     }
-  }, [currentNamespace, refreshPlans]);
 
-  // Listen for plan events
-  useEffect(() => {
-    const handlePlanEvent = () => {
-      console.log('Plan event detected, refreshing plans');
-      refreshPlans();
-    };
-
+    const handlePlanEvent = () => refreshPlans();
     window.addEventListener('planCreated', handlePlanEvent);
     window.addEventListener('planUpdated', handlePlanEvent);
+    window.addEventListener('planDeleted', handlePlanEvent);
     
     return () => {
       window.removeEventListener('planCreated', handlePlanEvent);
       window.removeEventListener('planUpdated', handlePlanEvent);
+      window.removeEventListener('planDeleted', handlePlanEvent);
     };
-  }, [refreshPlans]);
+  }, [currentNamespace, refreshPlans]);
 
   const handleStepStatusUpdate = async (planId: string, stepId: string, newStatus: Plan['steps'][0]['status']) => {
     const plan = plans.find(p => p.id === planId);
@@ -100,7 +104,6 @@ export function PlanManager({
         updated: new Date().toISOString()
       };
 
-      // Update plan status based on steps
       const allCompleted = updatedPlan.steps.every(step => step.status === 'completed');
       const anyFailed = updatedPlan.steps.some(step => step.status === 'failed');
       
@@ -112,7 +115,6 @@ export function PlanManager({
 
       await updatePlan(updatedPlan, config);
       
-      // Update local state
       setPlans(prevPlans => 
         prevPlans.map(p => p.id === planId ? updatedPlan : p)
       );
@@ -120,9 +122,6 @@ export function PlanManager({
       if (selectedPlanId === planId) {
         onPlanSelect(updatedPlan);
       }
-
-      // Trigger refresh
-      window.dispatchEvent(new CustomEvent('planUpdated'));
 
     } catch (error: any) {
       console.error('Error updating plan step:', error);
@@ -136,7 +135,6 @@ export function PlanManager({
     try {
       await deletePlan(plan, config);
       
-      // Update local state
       setPlans(prevPlans => prevPlans.filter(p => p.id !== plan.id));
       
       if (selectedPlanId === plan.id) {
@@ -156,6 +154,18 @@ export function PlanManager({
     }
   };
 
+  const togglePlanExpanded = (planId: string) => {
+    setExpandedPlans(prev => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(planId)) {
+        newExpanded.delete(planId);
+      } else {
+        newExpanded.add(planId);
+      }
+      return newExpanded;
+    });
+  };
+
   const getStepStatusIcon = (status: Plan['steps'][0]['status']) => {
     switch (status) {
       case 'completed':
@@ -173,6 +183,32 @@ export function PlanManager({
     const completed = plan.steps.filter(s => s.status === 'completed').length;
     const total = plan.steps.length;
     return `${completed}/${total} steps completed`;
+  };
+
+  const getPriorityColor = (priority: string | undefined) => {
+    switch (priority) {
+      case 'high':
+        return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+      case 'medium':
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+      case 'low':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+    }
+  };
+
+  const getComplexityColor = (complexity: string | undefined) => {
+    switch (complexity) {
+      case 'high':
+        return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400';
+      case 'medium':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      case 'low':
+        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+    }
   };
 
   return (
@@ -204,11 +240,27 @@ export function PlanManager({
               <div className="p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => togglePlanExpanded(plan.id)}
+                      className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                    >
+                      {expandedPlans.has(plan.id) ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </button>
                     <h3 className="font-medium">{plan.title}</h3>
                     {plan.status === 'completed' && (
-                      <span className="text-xs px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
-                        Completed
-                      </span>
+                      <FallbackBadge variant="success">Completed</FallbackBadge>
+                    )}
+                    {plan.status === 'cancelled' && (
+                      <FallbackBadge variant="destructive">Cancelled</FallbackBadge>
+                    )}
+                    {plan.metadata.priority && (
+                      <FallbackBadge className={getPriorityColor(plan.metadata.priority)}>
+                        {plan.metadata.priority} priority
+                      </FallbackBadge>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -235,71 +287,107 @@ export function PlanManager({
                 </div>
 
                 <div className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                  {plan.type.charAt(0).toUpperCase() + plan.type.slice(1)} Plan • 
-                  Created {new Date(plan.created).toLocaleDateString()} •
-                  {getProgressText(plan)}
+                  <div className="flex items-center gap-2">
+                    <span>{plan.type.charAt(0).toUpperCase() + plan.type.slice(1)} Plan</span>
+                    <span>•</span>
+                    <span>Created {new Date(plan.created).toLocaleDateString()}</span>
+                    <span>•</span>
+                    <span>{getProgressText(plan)}</span>
+                    {plan.metadata.complexity && (
+                      <>
+                        <span>•</span>
+                        <FallbackBadge className={getComplexityColor(plan.metadata.complexity)}>
+                          {plan.metadata.complexity} complexity
+                        </FallbackBadge>
+                      </>
+                    )}
+                  </div>
+                  {plan.metadata.estimatedTime && (
+                    <div className="mt-1">
+                      Estimated time: {plan.metadata.estimatedTime}
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-2">
-                  {plan.steps.map(step => (
-                    <div 
-                      key={step.id}
-                      className="flex items-start gap-2 p-2 rounded bg-gray-50 dark:bg-gray-900"
-                    >
-                      <div className="mt-1">
-                        {getStepStatusIcon(step.status)}
+                {expandedPlans.has(plan.id) && (
+                  <>
+                    {plan.description && (
+                      <div className="mb-4 text-sm">
+                        {plan.description}
                       </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-sm">{step.title}</div>
-                        {step.description && (
-                          <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                            {step.description}
+                    )}
+
+                    <div className="space-y-2">
+                      {plan.steps.map(step => (
+                        <div 
+                          key={step.id}
+                          className="flex items-start gap-2 p-2 rounded bg-gray-50 dark:bg-gray-900"
+                        >
+                          <div className="mt-1">
+                            {getStepStatusIcon(step.status)}
                           </div>
-                        )}
-                        {step.metadata.affectedFiles && step.metadata.affectedFiles.length > 0 && (
-                          <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                            Files: {step.metadata.affectedFiles.join(', ')}
+                          <div className="flex-1">
+                            <div className="font-medium text-sm">{step.title}</div>
+                            {step.description && (
+                              <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                                {step.description}
+                              </div>
+                            )}
+                            {step.metadata.affectedFiles && step.metadata.affectedFiles.length > 0 && (
+                              <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                Files: {step.metadata.affectedFiles.join(', ')}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => handleStepStatusUpdate(plan.id, step.id, 'in_progress')}
-                          className={`p-1 rounded ${
-                            step.status === 'in_progress'
-                              ? 'bg-blue-100 dark:bg-blue-900 text-blue-500'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                          }`}
-                          title="Mark as in progress"
-                        >
-                          <Clock className="h-3 w-3" />
-                        </button>
-                        <button
-                          onClick={() => handleStepStatusUpdate(plan.id, step.id, 'completed')}
-                          className={`p-1 rounded ${
-                            step.status === 'completed'
-                              ? 'bg-green-100 dark:bg-green-900 text-green-500'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                          }`}
-                          title="Mark as completed"
-                        >
-                          <Check className="h-3 w-3" />
-                        </button>
-                        <button
-                          onClick={() => handleStepStatusUpdate(plan.id, step.id, 'failed')}
-                          className={`p-1 rounded ${
-                            step.status === 'failed'
-                              ? 'bg-red-100 dark:bg-red-900 text-red-500'
-                              : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-                          }`}
-                          title="Mark as failed"
-                        >
-                          <AlertCircle className="h-3 w-3" />
-                        </button>
-                      </div>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => handleStepStatusUpdate(plan.id, step.id, 'in_progress')}
+                              className={`p-1 rounded ${
+                                step.status === 'in_progress'
+                                  ? 'bg-blue-100 dark:bg-blue-900 text-blue-500'
+                                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                              title="Mark as in progress"
+                            >
+                              <Clock className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={() => handleStepStatusUpdate(plan.id, step.id, 'completed')}
+                              className={`p-1 rounded ${
+                                step.status === 'completed'
+                                  ? 'bg-green-100 dark:bg-green-900 text-green-500'
+                                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                              title="Mark as completed"
+                            >
+                              <Check className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={() => handleStepStatusUpdate(plan.id, step.id, 'failed')}
+                              className={`p-1 rounded ${
+                                step.status === 'failed'
+                                  ? 'bg-red-100 dark:bg-red-900 text-red-500'
+                                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                              title="Mark as failed"
+                            >
+                              <AlertCircle className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+
+                    {plan.metadata.tags && plan.metadata.tags.length > 0 && (
+                      <div className="mt-4 flex items-center gap-2">
+                        <span className="text-sm text-gray-500">Tags:</span>
+                        {plan.metadata.tags.map(tag => (
+                          <FallbackBadge key={tag} variant="outline">{tag}</FallbackBadge>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           ))
