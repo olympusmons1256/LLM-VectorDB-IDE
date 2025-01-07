@@ -151,7 +151,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <div className="flex-none" style={{ height: HEADER_HEIGHT }}>
+      <header className="flex-none" style={{ height: HEADER_HEIGHT }}>
         <div className="flex items-center justify-between h-full px-4 border-b dark:border-gray-700 bg-background">
           <div className="flex items-center gap-4">
             <Menu className="h-5 w-5 cursor-pointer" onClick={() => setSidebarOpen(!sidebarOpen)} />
@@ -179,54 +179,53 @@ export default function ChatPage() {
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className={`flex-1 p-4 ${getLayoutClasses()} gap-4 mx-auto`}>
-        {/* Left sidebar - Document Manager */}
-        <div className="w-full min-w-0 flex">
-          <DocumentSidebar 
-            config={getConfig()}
-            onError={setError}
-            onNamespaceChange={setCurrentNamespace}
-            currentNamespace={currentNamespace}
-            visible={sidebarOpen}
-          />
-        </div>
-
-        {/* Chat area */}
-        <div className="min-w-0 flex justify-center">
-          <div className="w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg bg-background">
-            {activePlan && (
-              <div className="px-4 py-2 text-sm border-b dark:border-gray-700">
-                Active Plan: <span className="font-medium">{activePlan.title}</span>
-              </div>
-            )}
-            <Chat
-              messages={messages}
-              isLoading={isLoading}
-              error={error}
-              onSendMessage={handleSendMessage}
-              hasApiKey={provider => Boolean(apiKeys[provider])}
-            />
-          </div>
-        </div>
-
-        {/* Right sidebar - Code and Plans */}
-        <div className="w-full min-w-0 flex flex-col overflow-hidden">
-          <div className="flex-1 border-b dark:border-gray-700 overflow-auto">
-            <CodeContainer messages={messages} />
-          </div>
-          <div className="flex-1 overflow-auto">
-            <PlanManager
+      <main className="flex-1 overflow-hidden" style={{ height: `calc(100% - ${HEADER_HEIGHT})` }}>
+        <div className={`h-full ${getLayoutClasses()} gap-4 mx-auto p-4`}>
+          <div className="h-full min-w-0 flex overflow-hidden">
+            <DocumentSidebar 
               config={getConfig()}
-              currentNamespace={currentNamespace}
               onError={setError}
-              onPlanSelect={setActivePlan}
-              selectedPlanId={activePlan?.id}
+              onNamespaceChange={setCurrentNamespace}
+              currentNamespace={currentNamespace}
+              visible={sidebarOpen}
             />
           </div>
+
+          <div className="h-full min-w-0 flex justify-center overflow-hidden">
+            <div className="w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg bg-background">
+              {activePlan && (
+                <div className="flex-none px-4 py-2 text-sm border-b dark:border-gray-700">
+                  Active Plan: <span className="font-medium">{activePlan.title}</span>
+                </div>
+              )}
+              <Chat
+                messages={messages}
+                isLoading={isLoading}
+                error={error}
+                onSendMessage={handleSendMessage}
+                hasApiKey={provider => Boolean(apiKeys[provider])}
+              />
+            </div>
+          </div>
+
+          <div className="h-full min-w-0 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 border-b dark:border-gray-700 overflow-auto">
+              <CodeContainer messages={messages} />
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto">
+              <PlanManager
+                config={getConfig()}
+                currentNamespace={currentNamespace}
+                onError={setError}
+                onPlanSelect={setActivePlan}
+                selectedPlanId={activePlan?.id}
+              />
+            </div>
+          </div>
         </div>
-      </div>
+      </main>
 
       <SettingsModal
         isOpen={showSettings}
@@ -236,9 +235,6 @@ export default function ChatPage() {
         onSave={(keys, config) => {
           setAPIKeys(keys);
           setVectorDBConfig(config);
-          localStorage.setItem('apiKeys', JSON.stringify(keys));
-          localStorage.setItem('vectorDBConfig', JSON.stringify(config));
-          
           if (keys.anthropic && keys.pinecone && keys.voyage && config.indexName) {
             setShowSettings(false);
           }

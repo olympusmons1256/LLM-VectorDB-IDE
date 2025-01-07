@@ -17,15 +17,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning className="dark">
-      <body className={`${inter.className} bg-background text-foreground antialiased`}>
+    <html lang="en" suppressHydrationWarning className="dark h-full">
+      <body className={`${inter.className} bg-background text-foreground antialiased h-full`}>
         <ThemeProvider 
           attribute="class" 
           defaultTheme="dark" 
           enableSystem 
           disableTransitionOnChange
         >
-          {children}
+          <div className="h-full flex flex-col">
+            {children}
+          </div>
           <Toaster />
         </ThemeProvider>
       </body>
