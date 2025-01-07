@@ -1,0 +1,264 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .step {
+    counter-increment: step;
+  }
+
+  .step:before {
+    @apply absolute w-8 h-8 bg-muted rounded-full font-medium text-center text-base inline-flex items-center justify-center -translate-x-12;
+    content: counter(step);
+  }
+}
+
+/* Markdown Styles */
+[data-theme='light'] .prose pre {
+  @apply bg-gray-100 border-gray-200;
+}
+[data-theme='dark'] .prose pre {
+  @apply bg-gray-900 border-gray-700;
+}
+
+.prose {
+  @apply max-w-none;
+}
+
+.prose a {
+  @apply transition-colors hover:text-gray-900 dark:hover:text-gray-100;
+}
+
+.prose pre {
+  @apply border rounded-lg overflow-x-auto;
+}
+
+.prose code {
+  @apply rounded;
+}
+
+.prose pre code {
+  @apply p-0 text-sm border-0 bg-transparent;
+}
+
+.prose img {
+  @apply rounded-lg border;
+}
+
+.prose h2,
+.prose h3,
+.prose h4 {
+  @apply scroll-m-20;
+}
+
+.prose :where(h1, h2, h3, h4, h5, h6) {
+  @apply font-bold;
+}
+
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  @apply bg-muted px-1.5 py-0.5 rounded-sm font-mono text-sm;
+}
+
+/* Dark mode input styles */
+.dark select,
+.dark textarea,
+.dark input:not([type='submit']):not([type='range']):not([type='radio']):not([type='checkbox']) {
+  @apply bg-gray-800 border-gray-700 text-white;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  @apply w-2 h-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/20 hover:bg-muted-foreground/30 rounded-full transition-colors;
+}
+
+/* Namespace select dark mode */
+.dark .namespace-select,
+.dark .namespace-dropdown {
+  @apply bg-gray-800 border-gray-700 text-white;
+}
+
+/* Chat component styles */
+.dark .prose-chat {
+  --tw-prose-body: theme('colors.gray.300');
+  --tw-prose-headings: theme('colors.white');
+  --tw-prose-lead: theme('colors.gray.300');
+  --tw-prose-links: theme('colors.blue.400');
+  --tw-prose-bold: theme('colors.white');
+  --tw-prose-code: theme('colors.white');
+  --tw-prose-pre-code: theme('colors.gray.300');
+  --tw-prose-pre-bg: theme('colors.gray.900');
+}
+
+.dark .chat-container {
+  @apply bg-gray-900 text-gray-100;
+}
+
+.dark .chat-message {
+  @apply bg-gray-900 border-gray-700;
+}
+
+.dark .chat-message-user {
+  @apply bg-blue-700 text-white;
+}
+
+.dark .plan-status {
+  @apply bg-blue-900/20 border-gray-700 text-gray-100;
+}
+
+/* Message container spacing */
+.message-container {
+  @apply flex flex-col h-full overflow-hidden;
+}
+
+/* Input container consistency */
+.chat-input-container {
+  @apply max-w-[900px] mx-auto w-full p-4;
+}
+
+/* Code block refinements */
+.dark .code-block {
+  @apply bg-gray-900 border-gray-700;
+}
+
+.dark .code-block pre {
+  @apply bg-gray-900;
+}
+
+.dark .code-block code {
+  @apply text-gray-200;
+}
+
+/* Loading message styles */
+.dark .loading-message {
+  @apply bg-gray-900 border-gray-700 text-gray-300;
+}
+
+.dark .loading-spinner {
+  @apply border-gray-400 border-t-transparent;
+}
+
+/* Plan status container */
+.plan-status-container {
+  @apply px-4 py-2 text-sm border-b space-y-1;
+}
+
+/* Chat layout fixes */
+.chat-root {
+  @apply flex flex-col h-full overflow-hidden;
+}
+
+.chat-messages {
+  @apply flex-1 overflow-y-scroll p-4 space-y-4;
+}
+
+.chat-input-wrapper {
+  @apply flex-shrink-0 border-t dark:border-gray-700 bg-background mt-auto;
+}
+
+.chat-input-container {
+  @apply max-w-[900px] mx-auto w-full p-4;
+}
+
+/* Messages area */
+.chat-messages-container {
+  @apply h-full overflow-y-scroll;
+}
+
+/* Fix max width for messages */
+.chat-message {
+  @apply max-w-[900px] mx-auto;
+}
+
+/* Model selector positioning */
+.model-selector-container {
+  @apply max-w-[900px] mx-auto px-2 mt-2;
+}
+
+/* Ensure proper nesting of flex containers */
+.chat-outer-container {
+  @apply flex flex-col h-full;
+}
+
+.chat-inner-container {
+  @apply flex-1 overflow-hidden flex flex-col;
+}
+
+/* Ensure chat input stays at bottom */
+.chat-bottom {
+  @apply mt-auto;
+}
