@@ -1,12 +1,11 @@
-import type { Metadata } from 'next';
+// app/layout.tsx
 import { Inter } from 'next/font/google';
+import { ClientLayout } from './client-layout';
 import './globals.css';
-import { ThemeProvider } from '@/components/theme-provider';
-import { Toaster } from "@/components/ui/toaster";
 
 const inter = Inter({ subsets: ['latin'] });
 
-export const metadata: Metadata = {
+export const metadata = {
   title: 'simplifIDE',
   description: 'AI-powered IDE assistant',
 };
@@ -19,17 +18,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className="dark h-full">
       <body className={`${inter.className} bg-background text-foreground antialiased h-full`}>
-        <ThemeProvider 
-          attribute="class" 
-          defaultTheme="dark" 
-          enableSystem 
-          disableTransitionOnChange
-        >
-          <div className="h-full flex flex-col">
-            {children}
-          </div>
-          <Toaster />
-        </ThemeProvider>
+        <ClientLayout>
+          {children}
+        </ClientLayout>
       </body>
     </html>
   );

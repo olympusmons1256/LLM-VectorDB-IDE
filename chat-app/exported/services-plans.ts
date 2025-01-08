@@ -52,7 +52,6 @@ function generateUniqueId(prefix: string): string {
 function extractPlanDetails(content: string): { title: string; details: string } | null {
   console.log('Extracting plan from content');
 
-  // Try explicit plan patterns first
   const patterns = [
     /## Plan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
     /\bPlan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
@@ -72,7 +71,6 @@ function extractPlanDetails(content: string): { title: string; details: string }
     }
   }
 
-  // Look for numbered lists as a fallback
   const numberedListMatch = content.match(/(?:^|\n)\s*1\.\s+([^\n]+)(?:\n[\s\S]*)/);
   if (numberedListMatch) {
     const firstLine = numberedListMatch[1].trim();
@@ -133,10 +131,7 @@ function extractSteps(content: string): PlanStep[] {
   return steps;
 }
 
-export async function getActivePlans(
-  config: EmbeddingConfig,
-  namespace: string
-): Promise<Plan[]> {
+export async function getActivePlans(config: EmbeddingConfig, namespace: string): Promise<Plan[]> {
   try {
     console.log('Fetching plans for namespace:', namespace);
 
@@ -185,11 +180,7 @@ export async function getActivePlans(
   }
 }
 
-export async function createPlan(
-  content: string,
-  config: EmbeddingConfig,
-  namespace: string
-): Promise<Plan | null> {
+export async function createPlan(content: string, config: EmbeddingConfig, namespace: string): Promise<Plan | null> {
   try {
     console.log('Creating plan from content');
     const planDetails = extractPlanDetails(content);
@@ -253,6 +244,10 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   try {
     console.log('Storing plan:', plan.id);
     
+    if (!plan.namespace) {
+      throw new Error('Plan namespace is required');
+    }
+
     const planText = JSON.stringify(plan);
     const metadata = {
       filename: `plan-${plan.id}.json`,
@@ -264,7 +259,9 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
       timestamp: new Date().toISOString()
     };
 
+    // Add some logging to help debug the request
     console.log('Storing plan with metadata:', metadata);
+    console.log('Using namespace:', plan.namespace);
 
     const storeResponse = await fetch('/api/vector', {
       method: 'POST',
@@ -280,7 +277,9 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
     });
 
     if (!storeResponse.ok) {
-      throw new Error('Failed to store plan');
+      const errorData = await storeResponse.json();
+      console.error('Store plan response:', errorData);
+      throw new Error(errorData.error || 'Failed to store plan');
     }
 
     // Wait for indexing
@@ -292,20 +291,13 @@ async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   }
 }
 
-export async function updatePlan(
-  plan: Plan,
-  config: EmbeddingConfig
-): Promise<void> {
-  console.log('Updating plan:', plan.id);
+export async function updatePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   plan.updated = new Date().toISOString();
   await storePlan(plan, config);
   window.dispatchEvent(new CustomEvent('planUpdated', { detail: plan }));
 }
 
-export async function deletePlan(
-  plan: Plan,
-  config: EmbeddingConfig
-): Promise<void> {
+export async function deletePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
   try {
     console.log('Deleting plan:', plan.id);
 
@@ -439,6 +431,11 @@ function extractAffectedFiles(content: string): string[] {
   return Array.from(files);
 }
 
+// services/plans.ts
+import type { EmbeddingConfig } from './embedding';
+
+// Keep all existing interfaces (Plan, PlanStep) and main functions up until extractCommands
+
 function extractCommands(content: string): string[] {
   if (!content) return [];
   
@@ -481,45 +478,4 @@ function extractTests(content: string): string[] {
 function extractRollback(content: string): string | undefined {
   const rollbackMatch = content.match(/(?:rollback|revert):\s*([^.]+)/i);
   return rollbackMatch ? rollbackMatch[1].trim() : undefined;
-}
-
-function validatePlan(plan: any): Plan | null {
-  if (!plan?.id || !plan?.title || !Array.isArray(plan?.steps)) {
-    console.error('Invalid plan structure:', plan);
-    return null;
-  }
-
-  const timestamp = new Date().toISOString();
-  const steps = plan.steps
-    .map(step => ({
-      id: step.id || generateUniqueId('step'),
-      title: step.title,
-      description: step.description || '',
-      status: step.status || 'pending',
-      dependencies: Array.isArray(step.dependencies) ? step.dependencies : [],
-      created: step.created || timestamp,
-      updated: step.updated || timestamp,
-      metadata: step.metadata || {}
-    }))
-    .filter(step => step.title);
-
-  if (steps.length === 0) {
-    console.error('No valid steps found in plan');
-    return null;
-  }
-
-  return {
-    ...plan,
-    steps,
-    metadata: plan.metadata || {},
-    created: plan.created || timestamp,
-    updated: plan.updated || timestamp,
-    status: plan.status || 'active',
-    type: validatePlanType(plan.type)
-  };
-}
-
-function validatePlanType(type: string): Plan['type'] {
-  const validTypes: Plan['type'][] = ['refactor', 'feature', 'bug', 'other'];
-  return validTypes.includes(type as Plan['type']) ? type as Plan['type'] : 'other';
 }

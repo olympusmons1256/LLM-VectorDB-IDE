@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useTheme } from 'next-themes';
-import { Moon, Sun, Menu, Settings } from 'lucide-react';
 import { Chat } from '@/components/Chat';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CodeContainer } from '@/components/CodeContainer';
@@ -12,39 +11,30 @@ import { LayoutCustomizer } from '@/components/layout/LayoutCustomizer';
 import { useChatStore, useCurrentProject } from '@/store/chat-store';
 import type { LayoutMode } from '@/components/layout/types';
 import type { Model } from '@/types/message';
-
-const HEADER_HEIGHT = '48px';
-
-interface Config {
-  embedding: {
-    provider: 'voyage';
-  };
-  vectordb: {
-    provider: 'pinecone';
-    cloud: string;
-    region: string;
-    indexName: string;
-  };
-  apiKeys: {
-    anthropic?: string;
-    openai?: string;
-    voyage?: string;
-    pinecone?: string;
-  };
-}
+import type { VectorDBConfig } from '@/types/settings';
 
 export default function ChatPage() {
   const { theme, setTheme } = useTheme();
   const { messages, activePlan } = useCurrentProject();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('default');
+  const [vectorDBConfig, setVectorDBConfig] = useState<VectorDBConfig>({
+    cloud: 'aws',
+    region: 'us-east-1',
+    indexName: ''
+  });
+  const [apiKeys, setAPIKeys] = useState({
+    anthropic: '',
+    openai: '',
+    pinecone: '',
+    voyage: ''
+  });
+
   const {
     isLoading,
     error,
     currentNamespace,
     showSettings,
     sidebarOpen,
-    apiKeys,
-    vectorDBConfig,
     setMessages,
     addMessage,
     setIsLoading,
@@ -52,33 +42,29 @@ export default function ChatPage() {
     setCurrentNamespace,
     setShowSettings,
     setSidebarOpen,
-    setActivePlan,
-    setAPIKeys,
-    setVectorDBConfig
+    setActivePlan
   } = useChatStore();
 
-  const isConfigured = Boolean(
-    apiKeys.anthropic && 
-    apiKeys.pinecone && 
-    apiKeys.voyage && 
-    vectorDBConfig.indexName
-  );
-
   useEffect(() => {
+    // Check configuration when component mounts
+    const isConfigured = Boolean(
+      apiKeys.anthropic && 
+      apiKeys.pinecone && 
+      apiKeys.voyage && 
+      vectorDBConfig.indexName
+    );
+
     if (!isConfigured) {
       setShowSettings(true);
     }
-  }, [isConfigured, setShowSettings]);
+  }, [apiKeys, vectorDBConfig.indexName, setShowSettings]);
 
   useEffect(() => {
     const savedLayout = localStorage.getItem('layout-mode');
-    setLayoutMode(savedLayout as LayoutMode || 'default');
+    if (savedLayout) {
+      setLayoutMode(savedLayout as LayoutMode);
+    }
   }, []);
-
-  const handleLayoutChange = (mode: LayoutMode) => {
-    setLayoutMode(mode);
-    localStorage.setItem('layout-mode', mode);
-  };
 
   const getLayoutClasses = () => {
     switch (layoutMode) {
@@ -138,10 +124,10 @@ export default function ChatPage() {
     }
   };
 
-  const getConfig = (): Config => ({
-    embedding: { provider: 'voyage' },
+  const getConfig = () => ({
+    embedding: { provider: 'voyage' as const },
     vectordb: { 
-      provider: 'pinecone',
+      provider: 'pinecone' as const,
       cloud: vectorDBConfig.cloud,
       region: vectorDBConfig.region,
       indexName: vectorDBConfig.indexName
@@ -150,86 +136,54 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <header className="flex-none" style={{ height: HEADER_HEIGHT }}>
-        <div className="flex items-center justify-between h-full px-4 border-b dark:border-gray-700 bg-background">
-          <div className="flex items-center gap-4">
-            <Menu className="h-5 w-5 cursor-pointer" onClick={() => setSidebarOpen(!sidebarOpen)} />
-            <div className="flex items-center gap-2">
-              <span className="font-medium">simplifIDE</span>
-              {currentNamespace && (
-                <span className="text-sm text-muted-foreground">/ {currentNamespace}</span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <LayoutCustomizer onLayoutChange={handleLayoutChange} currentLayout={layoutMode} />
-            <div className="w-px h-6 bg-gray-200 dark:bg-gray-700" />
-            <button 
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="p-2 hover:bg-accent rounded-md"
-            >
-              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </button>
-            <button
-              onClick={() => setShowSettings(true)}
-              className="p-2 hover:bg-accent rounded-md"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
-          </div>
+    <div className="flex-1 overflow-hidden" style={{ height: `calc(100vh - 48px)` }}>
+      <div className={`h-full ${getLayoutClasses()} gap-4 mx-auto p-4`}>
+        <div className="h-full min-w-0 flex overflow-hidden">
+          <DocumentSidebar 
+            config={getConfig()}
+            onError={setError}
+            onNamespaceChange={setCurrentNamespace}
+            currentNamespace={currentNamespace}
+            visible={sidebarOpen}
+          />
         </div>
-      </header>
 
-      <main className="flex-1 overflow-hidden" style={{ height: `calc(100% - ${HEADER_HEIGHT})` }}>
-        <div className={`h-full ${getLayoutClasses()} gap-4 mx-auto p-4`}>
-          <div className="h-full min-w-0 flex overflow-hidden">
-            <DocumentSidebar 
-              config={getConfig()}
-              onError={setError}
-              onNamespaceChange={setCurrentNamespace}
-              currentNamespace={currentNamespace}
-              visible={sidebarOpen}
+        <div className="h-full min-w-0 flex justify-center overflow-hidden">
+          <div className="w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg bg-background">
+            {activePlan && (
+              <div className="flex-none px-4 py-2 text-sm border-b dark:border-gray-700">
+                Active Plan: <span className="font-medium">{activePlan.title}</span>
+              </div>
+            )}
+            <Chat
+              messages={messages}
+              isLoading={isLoading}
+              error={error}
+              onSendMessage={handleSendMessage}
+              hasApiKey={provider => Boolean(apiKeys[provider])}
             />
           </div>
+        </div>
 
-          <div className="h-full min-w-0 flex justify-center overflow-hidden">
-            <div className="w-[900px] flex flex-col overflow-hidden border dark:border-gray-700 rounded-lg bg-background">
-              {activePlan && (
-                <div className="flex-none px-4 py-2 text-sm border-b dark:border-gray-700">
-                  Active Plan: <span className="font-medium">{activePlan.title}</span>
-                </div>
-              )}
-              <Chat
-                messages={messages}
-                isLoading={isLoading}
-                error={error}
-                onSendMessage={handleSendMessage}
-                hasApiKey={provider => Boolean(apiKeys[provider])}
-              />
-            </div>
+        <div className="h-full min-w-0 flex flex-col overflow-hidden">
+          <div className="flex-1 min-h-0 border-b dark:border-gray-700 overflow-auto">
+            <CodeContainer messages={messages} />
           </div>
-
-          <div className="h-full min-w-0 flex flex-col overflow-hidden">
-            <div className="flex-1 min-h-0 border-b dark:border-gray-700 overflow-auto">
-              <CodeContainer messages={messages} />
-            </div>
-            <div className="flex-1 min-h-0 overflow-auto">
-              <PlanManager
-                config={getConfig()}
-                currentNamespace={currentNamespace}
-                onError={setError}
-                onPlanSelect={setActivePlan}
-                selectedPlanId={activePlan?.id}
-              />
-            </div>
+          <div className="flex-1 min-h-0 overflow-auto">
+            <PlanManager
+              config={getConfig()}
+              currentNamespace={currentNamespace}
+              onError={setError}
+              onPlanSelect={setActivePlan}
+              selectedPlanId={activePlan?.id}
+            />
           </div>
         </div>
-      </main>
+      </div>
 
       <SettingsModal
         isOpen={showSettings}
-        onClose={() => isConfigured ? setShowSettings(false) : null}
+        onClose={() => Boolean(apiKeys.anthropic && apiKeys.pinecone && apiKeys.voyage && vectorDBConfig.indexName) ? setShowSettings(false) : null}
         apiKeys={apiKeys}
         vectorDBConfig={vectorDBConfig}
         onSave={(keys, config) => {

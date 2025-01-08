@@ -1,40 +1,47 @@
+// app/ClientChatContent.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useTheme } from 'next-themes';
 import { Chat } from '@/components/Chat';
 import { SettingsModal } from '@/components/SettingsModal';
 import { CodeContainer } from '@/components/CodeContainer';
 import { DocumentSidebar } from '@/components/DocumentSidebar';
 import { PlanManager } from '@/components/PlanManager';
-import { LayoutCustomizer } from '@/components/layout/LayoutCustomizer';
-import { useChatStore, useCurrentProject } from '@/store/chat-store';
-import type { LayoutMode } from '@/components/layout/types';
+import { useChatStore } from '@/store/chat-store';
 import type { Model } from '@/types/message';
-import type { VectorDBConfig } from '@/types/settings';
 
-export default function ChatPage() {
-  const { theme, setTheme } = useTheme();
-  const { messages, activePlan } = useCurrentProject();
-  const [layoutMode, setLayoutMode] = useState<LayoutMode>('default');
-  const [vectorDBConfig, setVectorDBConfig] = useState<VectorDBConfig>({
-    cloud: 'aws',
-    region: 'us-east-1',
-    indexName: ''
-  });
-  const [apiKeys, setAPIKeys] = useState({
-    anthropic: '',
-    openai: '',
-    pinecone: '',
-    voyage: ''
-  });
+interface Config {
+  apiKeys: {
+    anthropic?: string;
+    openai?: string;
+    voyage?: string;
+    pinecone?: string;
+    vectorIndexName?: string;
+    vectorCloud?: string;
+    vectorRegion?: string;
+  };
+  vectordb: {
+    provider: 'pinecone';
+    indexName: string;
+    cloud: string;
+    region: string;
+  };
+  embedding: {
+    provider: 'voyage';
+  };
+}
 
+export function ClientChatContent() {
   const {
+    messages,
+    activePlan,
     isLoading,
     error,
     currentNamespace,
     showSettings,
     sidebarOpen,
+    apiKeys,
+    vectorDBConfig,
     setMessages,
     addMessage,
     setIsLoading,
@@ -42,29 +49,24 @@ export default function ChatPage() {
     setCurrentNamespace,
     setShowSettings,
     setSidebarOpen,
-    setActivePlan
+    setActivePlan,
+    setAPIKeys,
+    setVectorDBConfig,
+    layoutMode
   } = useChatStore();
 
-  useEffect(() => {
-    // Check configuration when component mounts
-    const isConfigured = Boolean(
-      apiKeys.anthropic && 
-      apiKeys.pinecone && 
-      apiKeys.voyage && 
-      vectorDBConfig.indexName
-    );
+  const isConfigured = Boolean(
+    apiKeys.anthropic && 
+    apiKeys.pinecone && 
+    apiKeys.voyage && 
+    vectorDBConfig.indexName
+  );
 
+  useEffect(() => {
     if (!isConfigured) {
       setShowSettings(true);
     }
-  }, [apiKeys, vectorDBConfig.indexName, setShowSettings]);
-
-  useEffect(() => {
-    const savedLayout = localStorage.getItem('layout-mode');
-    if (savedLayout) {
-      setLayoutMode(savedLayout as LayoutMode);
-    }
-  }, []);
+  }, [isConfigured, setShowSettings]);
 
   const getLayoutClasses = () => {
     switch (layoutMode) {
@@ -124,10 +126,10 @@ export default function ChatPage() {
     }
   };
 
-  const getConfig = () => ({
-    embedding: { provider: 'voyage' as const },
+  const getConfig = (): Config => ({
+    embedding: { provider: 'voyage' },
     vectordb: { 
-      provider: 'pinecone' as const,
+      provider: 'pinecone',
       cloud: vectorDBConfig.cloud,
       region: vectorDBConfig.region,
       indexName: vectorDBConfig.indexName
@@ -136,7 +138,7 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="flex-1 overflow-hidden" style={{ height: `calc(100vh - 48px)` }}>
+    <main className="flex-1 overflow-hidden" style={{ height: `calc(100% - 48px)` }}>
       <div className={`h-full ${getLayoutClasses()} gap-4 mx-auto p-4`}>
         <div className="h-full min-w-0 flex overflow-hidden">
           <DocumentSidebar 
@@ -183,7 +185,7 @@ export default function ChatPage() {
 
       <SettingsModal
         isOpen={showSettings}
-        onClose={() => Boolean(apiKeys.anthropic && apiKeys.pinecone && apiKeys.voyage && vectorDBConfig.indexName) ? setShowSettings(false) : null}
+        onClose={() => isConfigured ? setShowSettings(false) : null}
         apiKeys={apiKeys}
         vectorDBConfig={vectorDBConfig}
         onSave={(keys, config) => {
@@ -194,6 +196,6 @@ export default function ChatPage() {
           }
         }}
       />
-    </div>
+    </main>
   );
 }
