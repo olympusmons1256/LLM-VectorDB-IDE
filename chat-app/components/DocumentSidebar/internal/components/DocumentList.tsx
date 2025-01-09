@@ -14,14 +14,22 @@ interface DocumentListProps {
 }
 
 export function DocumentList({ namespace, loadingState }: DocumentListProps) {
-  const { documents, selectedType, sortOrder, setSortOrder } = useDocumentSidebarState();
+  const { 
+    documents, 
+    selectedType, 
+    sortOrder, 
+    setSortOrder 
+  } = useDocumentSidebarState();
+  
   const docs = documents[namespace] || [];
 
+  // Filter documents based on selected type
   const filteredDocs = docs.filter(doc => {
     if (!selectedType) return true;
     return doc.metadata?.type === selectedType;
   });
 
+  // Sort documents by timestamp
   const sortedDocs = [...filteredDocs].sort((a, b) => {
     const timeA = new Date(a?.metadata?.timestamp || 0).getTime();
     const timeB = new Date(b?.metadata?.timestamp || 0).getTime();
@@ -30,7 +38,7 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   if (loadingState.isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full">
+      <div className="flex flex-col items-center justify-center h-full py-8">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-3" />
         <div className="text-sm text-muted-foreground">
           {loadingState.status}
@@ -49,7 +57,7 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   if (loadingState.error) {
     return (
-      <div className="flex items-center justify-center h-full text-destructive">
+      <div className="flex items-center justify-center h-full text-destructive p-4 text-center">
         {loadingState.error}
       </div>
     );
@@ -57,7 +65,7 @@ export function DocumentList({ namespace, loadingState }: DocumentListProps) {
 
   if (sortedDocs.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm p-4 text-center">
         No documents found{selectedType ? ` in ${selectedType}` : ''}
       </div>
     );

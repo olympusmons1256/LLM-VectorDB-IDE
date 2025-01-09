@@ -2,11 +2,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { VectorDBConfig } from '@/types/settings';
-import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogCancel, AlertDialogAction } from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { useInitializationStore } from '@/store/initialization-store';
+import type { VectorDBConfig } from '@/types/settings';
 
 interface APIKeys {
   anthropic?: string;
@@ -66,14 +67,17 @@ const SERVERLESS_CONFIG = {
 export function SettingsModal({ 
   isOpen, 
   onClose, 
-  apiKeys, 
-  vectorDBConfig,
+  apiKeys: initialApiKeys, 
+  vectorDBConfig: initialConfig,
   onSave 
 }: SettingsModalProps) {
   const [isServerless, setIsServerless] = useState(false);
-  const [keys, setKeys] = useState<APIKeys>(apiKeys);
-  const [config, setConfig] = useState<VectorDBConfig>(vectorDBConfig);
+  const [keys, setKeys] = useState<APIKeys>(initialApiKeys);
+  const [config, setConfig] = useState<VectorDBConfig>(initialConfig);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const { stage, advanceStage } = useInitializationStore();
 
   // Debug log to verify environment variables
   useEffect(() => {
@@ -89,12 +93,12 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen) {
-      setKeys(apiKeys);
-      setConfig(vectorDBConfig);
+      setKeys(initialApiKeys);
+      setConfig(initialConfig);
       setValidationError(null);
       setIsServerless(false);
     }
-  }, [isOpen, apiKeys, vectorDBConfig]);
+  }, [isOpen, initialApiKeys, initialConfig]);
 
   useEffect(() => {
     if (isServerless && SERVERLESS_CONFIG.apiKeys) {
@@ -142,9 +146,24 @@ export function SettingsModal({
     return true;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (validateSettings()) {
-      onSave(keys, config);
+      setLoading(true);
+      try {
+        await onSave(keys, config);
+        
+        // If in config stage, advance to next stage
+        if (stage === 'config') {
+          advanceStage();
+        }
+        
+        onClose();
+      } catch (error) {
+        console.error('Settings save error:', error);
+        setValidationError(error instanceof Error ? error.message : 'Failed to save settings');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -317,11 +336,17 @@ export function SettingsModal({
         </div>
 
         <AlertDialogFooter className="mt-6">
-          <AlertDialogCancel onClick={onClose}>
+          <AlertDialogCancel 
+            onClick={() => onClose()}
+            disabled={loading || stage === 'config'}
+          >
             Cancel
           </AlertDialogCancel>
-          <AlertDialogAction onClick={handleSave}>
-            Save Changes
+          <AlertDialogAction
+            onClick={handleSave}
+            disabled={loading}
+          >
+            {loading ? 'Saving...' : 'Save Changes'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

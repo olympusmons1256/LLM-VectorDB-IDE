@@ -1,55 +1,113 @@
 // components/UserInit.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useInitializationStore } from '@/store/initialization-store';
 import { useSaveStateStore } from '@/store/save-state-store';
+import type { UserProfile } from '@/types/save-state';
 
 export function UserInit() {
-  const [showUserSetup, setShowUserSetup] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  const { advanceStage } = useInitializationStore();
   const { currentUser, setCurrentUser } = useSaveStateStore();
 
+  // Handle session restoration
   useEffect(() => {
-    // Check if we need to show user setup
-    if (!currentUser) {
-      setShowUserSetup(true);
-    }
-  }, [currentUser]);
+    setMounted(true);
+    const initSession = async () => {
+      setLoading(true);
+      try {
+        // Check for existing session
+        const savedUser = localStorage.getItem('simplifide-current-user');
+        if (savedUser) {
+          const user = JSON.parse(savedUser);
+          await setCurrentUser(user);
+          advanceStage(); // Move to project stage
+          return;
+        }
+      } catch (error) {
+        console.error('Error restoring session:', error);
+        localStorage.removeItem('simplifide-current-user');
+        setError('Failed to restore session');
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const handleSetupUser = () => {
+    initSession();
+  }, [setCurrentUser, advanceStage]);
+
+  const handleSetupUser = async () => {
     if (!name.trim()) return;
 
-    setCurrentUser({
-      id: `user_${Date.now()}`,
-      name: name.trim(),
-      email: email.trim(),
-      preferences: {
-        theme: 'dark',
-        fontSize: 'medium',
-        layout: 'default',
-        autoSave: true,
-        autoSaveInterval: 300000,
-        showProjectPath: true,
-        showRecentProjects: true
-      },
-      lastActive: new Date().toISOString()
-    });
+    setLoading(true);
+    setError(null);
 
-    setShowUserSetup(false);
+    try {
+      // Create user profile
+      const user: UserProfile = {
+        id: `user_${Date.now()}`,
+        name: name.trim(),
+        email: email.trim(),
+        preferences: {
+          theme: 'dark',
+          fontSize: 'medium',
+          layout: 'default',
+          autoSave: true,
+          autoSaveInterval: 300000, // 5 minutes
+          showProjectPath: true,
+          showRecentProjects: true
+        },
+        lastActive: new Date().toISOString()
+      };
+
+      // Save user to local storage
+      localStorage.setItem('simplifide-current-user', JSON.stringify(user));
+      
+      // Update store
+      await setCurrentUser(user);
+
+      // Advance to project stage
+      advanceStage();
+
+    } catch (error) {
+      console.error('Error setting up user:', error);
+      setError(error instanceof Error ? error.message : 'Failed to create user profile');
+      setLoading(false);
+    }
   };
 
-  // Cannot be closed until user is set up
+  // Prevent closing dialog until user is set up
+  const handleOpenChange = () => {
+    // Dialog cannot be closed while loading or if user isn't set
+    return !loading && currentUser !== null;
+  };
+
+  if (!mounted) return null;
+
   return (
-    <Dialog open={showUserSetup} onOpenChange={() => {}}>
+    <Dialog open={!currentUser} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Welcome to simplifIDE</DialogTitle>
         </DialogHeader>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="name">Your Name</Label>
@@ -58,9 +116,16 @@ export function UserInit() {
               placeholder="Enter your name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              disabled={loading}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && name.trim()) {
+                  handleSetupUser();
+                }
+              }}
               autoFocus
             />
           </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">Email (optional)</Label>
             <Input
@@ -69,84 +134,25 @@ export function UserInit() {
               placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              disabled={loading}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && name.trim()) {
+                  handleSetupUser();
+                }
+              }}
             />
           </div>
         </div>
+
         <DialogFooter>
-          <Button onClick={handleSetupUser} disabled={!name.trim()}>
-            Get Started
+          <Button 
+            onClick={handleSetupUser} 
+            disabled={loading || !name.trim()}
+          >
+            {loading ? 'Setting up...' : 'Get Started'}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// Update app/client-layout.tsx
-'use client';
-
-import { useEffect } from 'react';
-import { ThemeProvider } from '@/components/theme-provider';
-import { Toaster } from "@/components/ui/toaster";
-import { MainHeader } from '@/components/MainHeader';
-import { UserInit } from '@/components/UserInit';
-import { useSaveStateStore } from '@/store/save-state-store';
-
-interface ClientLayoutProps {
-  children: React.ReactNode;
-}
-
-export function ClientLayout({ children }: ClientLayoutProps) {
-  const { currentUser, autoSaveEnabled } = useSaveStateStore();
-
-  // Handle beforeunload event for unsaved changes
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (useSaveStateStore.getState().pendingChanges) {
-        e.preventDefault();
-        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-        return e.returnValue;
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
-
-  // Set up auto-save logic
-  useEffect(() => {
-    if (!autoSaveEnabled || !currentUser) return;
-
-    const autoSaveInterval = setInterval(() => {
-      const state = useSaveStateStore.getState();
-      if (state.pendingChanges && state.activeProject) {
-        state.saveProject(state.activeProject, {}).catch(console.error);
-      }
-    }, 5 * 60 * 1000);
-
-    return () => clearInterval(autoSaveInterval);
-  }, [autoSaveEnabled, currentUser]);
-
-  return (
-    <ThemeProvider 
-      attribute="class" 
-      defaultTheme="dark" 
-      enableSystem 
-      disableTransitionOnChange
-    >
-      <div className="h-full flex flex-col">
-        {currentUser ? (
-          <>
-            <MainHeader />
-            <main className="flex-1 min-h-0">
-              {children}
-            </main>
-          </>
-        ) : (
-          <UserInit />
-        )}
-      </div>
-      <Toaster />
-    </ThemeProvider>
   );
 }

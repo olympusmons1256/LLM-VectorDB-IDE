@@ -1,6 +1,5 @@
 // components/DocumentSidebar/internal/types.ts
 import type { EmbeddingConfig } from '@/services/embedding';
-import type { LucideIcon } from 'lucide-react';
 
 export interface DocumentMetadata {
   filename: string;
@@ -38,6 +37,15 @@ export interface LoadingState {
   status: string;
   progress?: number;
   error?: string;
+}
+
+export interface DocumentManagerState {
+  selectedType: string | null;
+  sortOrder: 'asc' | 'desc';
+  sidebarVisible: boolean;
+  documents: Record<string, IndexedDocument[]>;
+  currentNamespace: string;
+  loadingState: LoadingState;
 }
 
 export interface FileTypeInfo {

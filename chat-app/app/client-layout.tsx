@@ -1,133 +1,127 @@
+// app/client-layout.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from "@/components/ui/toaster";
-import { useSaveStateStore } from '@/store/save-state-store';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { MainHeader } from '@/components/MainHeader';
+import { LoadingScreen } from '@/components/LoadingScreen';
+import { UserInit } from '@/components/UserInit';
+import { ProjectSelection } from '@/components/ProjectSelection';
+import { useInitializationStore } from '@/store/initialization-store';
+import { useSaveStateStore } from '@/store/save-state-store';
+import { useToast } from '@/hooks/use-toast';
+import { initializeApplication } from '@/services/initialization-service';
 
 interface ClientLayoutProps {
-  children: React.ReactNode;
-}
-
-function UserSetupDialog() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const setCurrentUser = useSaveStateStore(state => state.setCurrentUser);
-
-  const handleSetupUser = () => {
-    if (!name.trim()) return;
-
-    setCurrentUser({
-      id: `user_${Date.now()}`,
-      name: name.trim(),
-      email: email.trim() || undefined,
-      preferences: {
-        theme: 'dark',
-        fontSize: 'medium',
-        layout: 'default',
-        autoSave: true,
-        autoSaveInterval: 300000,
-        showProjectPath: true,
-        showRecentProjects: true
-      },
-      lastActive: new Date().toISOString()
-    });
-  };
-
-  return (
-    <Dialog open={true} onOpenChange={() => {}}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Welcome to simplifIDE</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
-            <Label htmlFor="name">Your Name</Label>
-            <Input
-              id="name"
-              placeholder="Enter your name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="email">Email (optional)</Label>
-            <Input
-              id="email"
-              type="email"
-              placeholder="Enter your email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button onClick={handleSetupUser} disabled={!name.trim()}>
-            Get Started
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+ children: React.ReactNode;
 }
 
 export function ClientLayout({ children }: ClientLayoutProps) {
-  const { currentUser, autoSaveEnabled } = useSaveStateStore();
+ const { stage, error, startInitialization, setError } = useInitializationStore();
+ const { currentUser, activeProject } = useSaveStateStore();
+ const { toast } = useToast();
 
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (useSaveStateStore.getState().pendingChanges) {
-        e.preventDefault();
-        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
-        return e.returnValue;
-      }
-    };
+ useEffect(() => {
+   const handleInitError = ({ detail }: CustomEvent) => {
+     const { stage, error } = detail;
+     toast({
+       title: `Initialization Error (${stage})`,
+       description: error.message,
+       variant: 'destructive'
+     });
+     setError(error.message);
+   };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, []);
+   const handleInitProgress = ({ detail }: CustomEvent) => {
+     const { progress } = detail;
+   };
 
-  useEffect(() => {
-    if (!autoSaveEnabled || !currentUser) return;
+   window.addEventListener('initStageError', handleInitError as EventListener);
+   window.addEventListener('initProgress', handleInitProgress as EventListener);
 
-    const autoSaveInterval = setInterval(() => {
-      const state = useSaveStateStore.getState();
-      if (state.pendingChanges && state.activeProject) {
-        state.saveProject(state.activeProject, {}).catch(console.error);
-      }
-    }, 5 * 60 * 1000);
+   return () => {
+     window.removeEventListener('initStageError', handleInitError as EventListener);
+     window.removeEventListener('initProgress', handleInitProgress as EventListener);
+   };
+ }, [toast, setError]);
 
-    return () => clearInterval(autoSaveInterval);
-  }, [autoSaveEnabled, currentUser]);
+ useEffect(() => {
+   if (stage === 'none') {
+     console.log('Starting initialization flow...');
+     initializeApplication().catch(error => {
+       console.error('Failed to initialize:', error);
+       setError(error instanceof Error ? error.message : 'Initialization failed');
+     });
+   }
+ }, [stage, setError]);
 
-  console.log('ClientLayout State:', { currentUser, autoSaveEnabled });
+ useEffect(() => {
+   const cleanup = () => {
+     if (currentUser) {
+       localStorage.setItem('simplifide-current-user', JSON.stringify(currentUser));
+     }
+     if (activeProject) {
+       localStorage.setItem('simplifide-active-project', JSON.stringify({
+         id: activeProject,
+         lastAccessed: new Date().toISOString()
+       }));
+     }
+   };
 
-  return (
-    <ThemeProvider 
-      attribute="class" 
-      defaultTheme="dark" 
-      enableSystem 
-      disableTransitionOnChange
-    >
-      <div className="h-full flex flex-col">
-        {!currentUser ? (
-          <UserSetupDialog />
-        ) : (
-          <>
-            <MainHeader />
-            <main className="flex-1 min-h-0">
-              {children}
-            </main>
-          </>
-        )}
-      </div>
-      <Toaster />
-    </ThemeProvider>
-  );
+   window.addEventListener('beforeunload', cleanup);
+   return () => window.removeEventListener('beforeunload', cleanup);
+ }, [currentUser, activeProject]);
+
+ if (stage === 'none') {
+   return <LoadingScreen message="Starting initialization..." fullScreen />;
+ }
+
+ if (error) {
+   return (
+     <div className="h-full flex items-center justify-center text-destructive">
+       <div className="text-center">
+         <h2 className="text-lg font-semibold mb-2">Initialization Error</h2>
+         <p>{error}</p>
+         <button
+           onClick={() => window.location.reload()}
+           className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
+         >
+           Retry
+         </button>
+       </div>
+     </div>
+   );
+ }
+
+ if (stage === 'auth' || !currentUser) {
+   return <UserInit />;
+ }
+
+ if (stage === 'project' || !activeProject) {
+   return <ProjectSelection />;
+ }
+
+ if (stage !== 'complete') {
+   return <LoadingScreen message={`Initializing (${stage})...`} fullScreen />;
+ }
+
+ return (
+   <ThemeProvider 
+     attribute="class" 
+     defaultTheme="dark" 
+     enableSystem 
+     disableTransitionOnChange
+   >
+     <div className="h-full flex flex-col bg-background text-foreground">
+       <MainHeader />
+       <main className="flex-1 min-h-0">
+         {children}
+       </main>
+     </div>
+     <Toaster />
+   </ThemeProvider>
+ );
 }
+
+export default ClientLayout;

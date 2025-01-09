@@ -1,524 +1,383 @@
 // store/chat-store.ts
 import { create } from 'zustand';
-import { v4 as uuidv4 } from 'uuid';
 import type { Message } from '@/types/message';
 import type { Plan } from '@/services/plans';
 import type { CodeBlock, CodeAnnotation } from '@/types/code-block';
 import type { LayoutMode } from '@/components/layout/types';
 import type { VectorDBConfig } from '@/types/settings';
-
-export type ChatEvent = {
- type: 'message_added' | 'state_cleared' | 'state_loaded' | 'error_occurred';
- payload?: any;
- timestamp: number;
-};
-
-export interface ProjectState {
- messages: Message[];
- activePlan: Plan | null;
- documents: {
-   types: Record<string, number>;
-   lastRefreshed?: string;
- };
- codeBlocks: CodeBlock[];
- annotations: CodeAnnotation[];
- metadata?: {
-   lastModified: string;
-   modifiedBy: string;
- };
-}
+import type { SavedProject, ProjectState } from '@/types/save-state';
+import { getActivePlans, updatePlan } from '@/services/plans';
+import { useInitializationStore } from './initialization-store';
 
 interface ChatState {
- // Configuration
- config: any;
- isConfigured: boolean;
- apiKeys: {
-   anthropic?: string;
-   openai?: string;
-   voyage?: string;
-   pinecone?: string;
- };
- vectorDBConfig: VectorDBConfig;
+  // Configuration
+  isConfigured: boolean;
+  apiKeys: {
+    anthropic?: string;
+    openai?: string;
+    voyage?: string;
+    pinecone?: string;
+  };
+  vectorDBConfig: VectorDBConfig;
+  
+  // Project State
+  currentNamespace: string;
+  messages: Message[];
+  activePlan: Plan | null;
+  documents: {
+    types: Record<string, number>;
+    lastRefreshed?: string;
+    selectedType?: string | null;
+  };
+  codeBlocks: CodeBlock[];
+  annotations: CodeAnnotation[];
+  
+  // UI State
+  isLoading: boolean;
+  error: string | null;
+  showSettings: boolean;
+  sidebarOpen: boolean;
+  layoutMode: LayoutMode;
 
- // Project State
- projects: Record<string, any>;
- currentNamespace: string;
- messages: Message[];
- activePlan: Plan | null;
- documents: {
-   types: Record<string, number>;
-   lastRefreshed?: string;
- };
- codeBlocks: CodeBlock[];
- annotations: CodeAnnotation[];
- eventLog: ChatEvent[];
- pendingChanges: boolean;
- lastSaved: string | null;
+  // Initialization
+  initializeState: (config: { 
+    apiKeys: ChatState['apiKeys'];
+    vectorDBConfig: VectorDBConfig;
+    namespace?: string;
+    project?: SavedProject;
+  }) => Promise<void>;
+  
+  // UI Actions
+  setShowSettings: (show: boolean) => void;
+  setSidebarOpen: (open: boolean) => void;
+  setLayoutMode: (mode: LayoutMode) => void;
+  
+  // Configuration Actions
+  setAPIKeys: (keys: ChatState['apiKeys']) => void;
+  setVectorDBConfig: (config: VectorDBConfig) => void;
+  setCurrentNamespace: (namespace: string) => Promise<void>;
 
- // Loading States
- isLoading: boolean;
- error: string | null;
- lastError: Error | null;
+  // Message Actions  
+  setMessages: (messages: Message[]) => void;
+  addMessage: (message: Message) => void;
+  updateMessage: (id: string, update: Partial<Message>) => void;
+  removeMessage: (id: string) => void;
+  clearMessages: () => void;
 
- // UI State
- showSettings: boolean;
- sidebarOpen: boolean;
- layoutMode: LayoutMode;
+  // Document Actions
+  setDocuments: (documents: ChatState['documents']) => void;
+  updateDocuments: (update: Partial<ChatState['documents']>) => void;
+  refreshDocuments: (namespace: string) => Promise<void>;
 
- // Actions
- setShowSettings: (show: boolean) => void;
- setSidebarOpen: (open: boolean) => void;
- setLayoutMode: (mode: LayoutMode) => void;
- setCurrentNamespace: (namespace: string) => void;
- setAPIKeys: (keys: ChatState['apiKeys']) => void;
- setVectorDBConfig: (config: VectorDBConfig) => void;
- setMessages: (messages: Message[]) => void;
- addMessage: (message: Message) => void;
- updateMessage: (id: string, update: Partial<Message>) => void;
- removeMessage: (id: string) => void;
- clearMessages: () => void;
- setActivePlan: (plan: Plan | null) => void;
- updatePlan: (update: Partial<Plan>) => void;
- setDocuments: (documents: ChatState['documents']) => void;
- updateDocuments: (update: Partial<ChatState['documents']>) => void;
- refreshDocuments: (namespace: string) => Promise<void>;
- setCodeBlocks: (blocks: CodeBlock[]) => void;
- addCodeBlock: (block: CodeBlock) => void;
- updateCodeBlock: (id: string, update: Partial<CodeBlock>) => void;
- removeCodeBlock: (id: string) => void;
- setAnnotations: (annotations: CodeAnnotation[]) => void;
- addAnnotation: (annotation: CodeAnnotation) => void;
- clearState: () => void;
- loadState: (projectId: string) => Promise<void>;
- getState: () => ProjectState;
- validateState: () => boolean;
- setIsLoading: (loading: boolean) => void;
- setError: (error: string | null) => void;
- logError: (error: Error) => void;
- clearError: () => void;
- logEvent: (event: Omit<ChatEvent, 'timestamp'>) => void;
- getEvents: (since?: number) => ChatEvent[];
- clearEvents: () => void;
-}
+  // Code Block Actions
+  setCodeBlocks: (blocks: CodeBlock[]) => void;
+  addCodeBlock: (block: CodeBlock) => void;
+  updateCodeBlock: (id: string, update: Partial<CodeBlock>) => void;
+  removeCodeBlock: (id: string) => void;
 
-function validateDocuments(documents: any): boolean {
- return typeof documents === 'object' && 
-        documents !== null &&
-        typeof documents.types === 'object';
-}
+  // Annotation Actions
+  setAnnotations: (annotations: CodeAnnotation[]) => void;
+  addAnnotation: (annotation: CodeAnnotation) => void;
+  
+  // Plan Actions
+  setActivePlan: (plan: Plan | null) => void;
+  updatePlan: (update: Partial<Plan>) => void;
 
-function validateMessages(messages: any): boolean {
- return Array.isArray(messages) &&
-        messages.every(msg => 
-          typeof msg === 'object' && 
-          msg !== null &&
-          typeof msg.role === 'string' &&
-          typeof msg.content === 'string'
-        );
-}
+  // State Management
+  clearState: () => void;
+  loadProjectState: (project: SavedProject) => Promise<void>;
+  getState: () => ProjectState;
 
-function validateCodeBlocks(blocks: any): boolean {
- return Array.isArray(blocks) &&
-        blocks.every(block => 
-          typeof block === 'object' &&
-          block !== null &&
-          typeof block.id === 'string' &&
-          typeof block.language === 'string' &&
-          typeof block.code === 'string'
-        );
+  // Status Actions  
+  setIsLoading: (loading: boolean) => void;
+  setError: (error: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
- config: null,
- isConfigured: false,
- apiKeys: {},
- vectorDBConfig: {
-   cloud: 'aws',
-   region: 'us-east-1',
-   indexName: ''
- },
+  // Initial state
+  isConfigured: false,
+  apiKeys: {},
+  vectorDBConfig: {
+    cloud: 'aws',
+    region: 'us-east-1',
+    indexName: ''
+  },
 
- projects: {},
- currentNamespace: '',
- messages: [],
- activePlan: null,
- documents: { types: {} },
- codeBlocks: [],
- annotations: [],
- eventLog: [],
- pendingChanges: false,
- lastSaved: null,
+  currentNamespace: '',
+  messages: [],
+  activePlan: null,
+  documents: { types: {} },
+  codeBlocks: [],
+  annotations: [],
 
- isLoading: false,
- error: null,
- lastError: null,
+  isLoading: false,
+  error: null,
+  showSettings: false,
+  sidebarOpen: true,
+  layoutMode: 'default',
 
- showSettings: false,
- sidebarOpen: true,
- layoutMode: 'default',
+  // Initialization
+  initializeState: async (config) => {
+    const state = get();
+    const initStore = useInitializationStore.getState();
 
- setShowSettings: (show) => set({ showSettings: show }),
- setSidebarOpen: (open) => set({ sidebarOpen: open }),
- setLayoutMode: (mode) => set({ layoutMode: mode }),
+    try {
+      // Load configuration - config stage
+      set({ 
+        apiKeys: config.apiKeys,
+        vectorDBConfig: config.vectorDBConfig,
+        isConfigured: Boolean(
+          config.apiKeys.pinecone &&
+          config.apiKeys.voyage &&
+          config.vectorDBConfig.indexName
+        )
+      });
+      
+      initStore.advanceStage(); // Move to documents stage
 
- setAPIKeys: (keys) => {
-   console.log('Setting API keys');
-   set({ apiKeys: keys, isConfigured: true });
- },
+      // Initialize document system
+      if (config.namespace) {
+        await state.setCurrentNamespace(config.namespace);
+      }
 
- setVectorDBConfig: (config) => {
-   console.log('Setting vector DB config:', config);
-   set({ vectorDBConfig: config });
- },
+      initStore.advanceStage(); // Move to chat stage
 
- setCurrentNamespace: async (namespace) => {
-   console.log('Setting current namespace:', namespace);
-   const state = get();
-   
-   // Clear current state when changing namespace
-   state.clearState();
-   set({ currentNamespace: namespace });
-   
-   if (namespace) {
-     try {
-       await state.refreshDocuments(namespace);
-     } catch (error) {
-       console.error('Error refreshing documents for namespace:', error);
-       state.setError('Failed to load namespace documents');
-     }
-   }
-   
-   state.logEvent({ type: 'state_loaded', payload: { namespace } });
- },
+      // Load project state
+      if (config.project) {
+        await state.loadProjectState(config.project);
+      }
 
- setMessages: (messages) => {
-   if (!validateMessages(messages)) {
-     console.error('Invalid messages format');
-     return;
-   }
-   console.log('Setting messages:', messages.length);
-   set({ messages, pendingChanges: true });
- },
- 
- addMessage: (message) => {
-   const messageWithId = { ...message, id: message.id || uuidv4() };
-   console.log('Adding message:', messageWithId.id);
-   set(state => ({ 
-     messages: [...state.messages, messageWithId],
-     pendingChanges: true 
-   }));
-   get().logEvent({ type: 'message_added', payload: { messageId: messageWithId.id } });
- },
+      initStore.advanceStage(); // Move to plans stage
+      initStore.advanceStage(); // Move to complete stage
+      
+    } catch (error) {
+      console.error('Error initializing chat store:', error);
+      initStore.setError(error instanceof Error ? error.message : 'Failed to initialize');
+      throw error;
+    }
+  },
 
- updateMessage: (id, update) => {
-   console.log('Updating message:', id);
-   set(state => ({
-     messages: state.messages.map(msg => 
-       msg.id === id ? { ...msg, ...update } : msg
-     ),
-     pendingChanges: true
-   }));
- },
+  // UI Actions
+  setShowSettings: (show) => set({ showSettings: show }),
+  setSidebarOpen: (open) => set({ sidebarOpen: open }),
+  setLayoutMode: (mode) => set({ layoutMode: mode }),
 
- removeMessage: (id) => {
-   console.log('Removing message:', id);
-   set(state => ({
-     messages: state.messages.filter(msg => msg.id !== id),
-     pendingChanges: true
-   }));
- },
+  // Configuration Actions
+  setAPIKeys: (keys) => set(state => ({
+    apiKeys: keys,
+    isConfigured: Boolean(
+      keys.pinecone &&
+      keys.voyage &&
+      state.vectorDBConfig.indexName
+    )
+  })),
 
- clearMessages: () => {
-   console.log('Clearing all messages');
-   set({ messages: [], pendingChanges: true });
- },
+  setVectorDBConfig: (config) => set(state => ({
+    vectorDBConfig: config,
+    isConfigured: Boolean(
+      state.apiKeys.pinecone &&
+      state.apiKeys.voyage &&
+      config.indexName
+    )
+  })),
 
- setActivePlan: (plan) => {
-   console.log('Setting active plan:', plan?.id);
-   set({ 
-     activePlan: plan,
-     pendingChanges: true
-   });
- },
+  setCurrentNamespace: async (namespace) => {
+    const state = get();
+    
+    try {
+      set({ currentNamespace: namespace });
+      
+      // Only attempt to load documents if properly configured
+      if (namespace && state.isConfigured) {
+        await state.refreshDocuments(namespace);
+      }
+      
+    } catch (error) {
+      console.error('Error setting namespace:', error);
+      state.setError('Failed to load namespace documents');
+      throw error;
+    }
+  },
 
- updatePlan: (update) => {
-   console.log('Updating plan:', update);
-   set(state => ({
-     activePlan: state.activePlan ? { ...state.activePlan, ...update } : null,
-     pendingChanges: true
-   }));
- },
+  // Message Actions  
+  setMessages: (messages) => set({ messages }),
+  
+  addMessage: (message) => set(state => ({
+    messages: [...state.messages, message]
+  })),
 
- setDocuments: (documents) => {
-   if (!validateDocuments(documents)) {
-     console.error('Invalid documents format');
-     return;
-   }
-   console.log('Setting documents:', documents);
-   set({ documents });
- },
+  updateMessage: (id, update) => set(state => ({
+    messages: state.messages.map(msg =>
+      msg.id === id ? { ...msg, ...update } : msg
+    )
+  })),
 
- updateDocuments: (update) => {
-   console.log('Updating documents:', update);
-   set(state => ({
-     documents: { ...state.documents, ...update }
-   }));
- },
+  removeMessage: (id) => set(state => ({
+    messages: state.messages.filter(msg => msg.id !== id)
+  })),
 
- refreshDocuments: async (namespace) => {
-   console.log('Refreshing documents for namespace:', namespace);
-   const state = get();
-   if (!state.isConfigured || !namespace) {
-     console.log('Cannot refresh - not configured or no namespace');
-     return;
-   }
+  clearMessages: () => set({ messages: [] }),
 
-   state.setIsLoading(true);
-   let retryCount = 0;
-   const maxRetries = 3;
-   const retryDelay = 1000;
+  // Document Actions
+  setDocuments: (documents) => set({ documents }),
 
-   while (retryCount < maxRetries) {
-     try {
-       console.log(`Refresh attempt ${retryCount + 1} of ${maxRetries}`);
-       
-       const config = {
-         apiKeys: state.apiKeys,
-         vectordb: state.vectorDBConfig,
-         embedding: { provider: 'voyage' as const }
-       };
+  updateDocuments: (update) => set(state => ({
+    documents: { ...state.documents, ...update }
+  })),
 
-       if (!config.apiKeys.pinecone || !config.vectordb.indexName) {
-         throw new Error('Missing required configuration');
-       }
+  refreshDocuments: async (namespace) => {
+    const state = get();
+    if (!state.isConfigured || !namespace) return;
 
-       const response = await fetch('/api/vector', {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify({
-           operation: 'query_context',
-           config,
-           text: 'list all documents',
-           namespace,
-           filter: {
-             $and: [
-               { isComplete: { $eq: true } }
-             ]
-           }
-         })
-       });
+    try {
+      state.setIsLoading(true);
+      
+      const response = await fetch('/api/vector', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          operation: 'query_context',
+          config: {
+            apiKeys: state.apiKeys,
+            vectordb: state.vectorDBConfig,
+            embedding: { provider: 'voyage' }
+          },
+          text: 'list all documents',
+          namespace,
+          filter: {
+            $and: [
+              { isComplete: { $eq: true } }
+            ]
+          }
+        })
+      });
 
-       if (!response.ok) {
-         const errorData = await response.json();
-         throw new Error(errorData.error || `Server responded with ${response.status}`);
-       }
+      if (!response.ok) {
+        throw new Error('Failed to refresh documents');
+      }
 
-       const data = await response.json();
-       console.log('Documents refreshed successfully:', data);
-       
-       if (!data.matches) {
-         console.log('No documents found in namespace');
-         state.setDocuments({ types: {} });
-       } else {
-         state.setDocuments({ types: {}, ...data });
-       }
+      const data = await response.json();
+      
+      state.setDocuments({
+        types: {},
+        lastRefreshed: new Date().toISOString(),
+        ...data
+      });
 
-       state.setIsLoading(false);
-       state.setError(null);
-       return;
+    } catch (error: any) {
+      console.error('Error refreshing documents:', error);
+      state.setError(error.message);
+    } finally {
+      state.setIsLoading(false);
+    }
+  },
 
-     } catch (error: any) {
-       console.error(`Refresh attempt ${retryCount + 1} failed:`, error);
-       retryCount++;
-       
-       if (retryCount === maxRetries) {
-         state.setError(`Failed to refresh documents: ${error.message}`);
-         state.setIsLoading(false);
-         return;
-       }
-       
-       await new Promise(resolve => setTimeout(resolve, retryDelay * retryCount));
-     }
-   }
- },
+  // Code Block Actions
+  setCodeBlocks: (blocks) => set({ codeBlocks: blocks }),
+  
+  addCodeBlock: (block) => set(state => ({
+    codeBlocks: [...state.codeBlocks, block]
+  })),
 
- setCodeBlocks: (blocks) => {
-   if (!validateCodeBlocks(blocks)) {
-     console.error('Invalid code blocks format');
-     return;
-   }
-   console.log('Setting code blocks:', blocks.length);
-   set({ codeBlocks: blocks });
- },
+  updateCodeBlock: (id, update) => set(state => ({
+    codeBlocks: state.codeBlocks.map(block =>
+      block.id === id ? { ...block, ...update } : block
+    )
+  })),
 
- addCodeBlock: (block) => {
-   console.log('Adding code block:', block.id);
-   set(state => ({
-     codeBlocks: [...state.codeBlocks, block],
-     pendingChanges: true
-   }));
- },
+  removeCodeBlock: (id) => set(state => ({
+    codeBlocks: state.codeBlocks.filter(block => block.id !== id)
+  })),
 
- updateCodeBlock: (id, update) => {
-   console.log('Updating code block:', id);
-   set(state => ({
-     codeBlocks: state.codeBlocks.map(block => 
-       block.id === id ? { ...block, ...update } : block
-     ),
-     pendingChanges: true
-   }));
- },
+  // Annotation Actions
+  setAnnotations: (annotations) => set({ annotations }),
+  
+  addAnnotation: (annotation) => set(state => ({
+    annotations: [...state.annotations, annotation]
+  })),
+  
+  // Plan Actions
+  setActivePlan: (plan) => set({ activePlan: plan }),
 
- removeCodeBlock: (id) => {
-   console.log('Removing code block:', id);
-   set(state => ({
-     codeBlocks: state.codeBlocks.filter(block => block.id !== id),
-     pendingChanges: true
-   }));
- },
+  updatePlan: async (update) => {
+    const state = get();
+    if (!state.activePlan) return;
 
- setAnnotations: (annotations) => {
-   console.log('Setting annotations:', annotations.length);
-   set({ annotations });
- },
+    const updatedPlan = { ...state.activePlan, ...update };
+    
+    try {
+      await updatePlan(updatedPlan, {
+        apiKeys: state.apiKeys,
+        vectordb: state.vectorDBConfig,
+        embedding: { provider: 'voyage' }
+      });
+      
+      set({ activePlan: updatedPlan });
+    } catch (error) {
+      console.error('Error updating plan:', error);
+      state.setError('Failed to update plan');
+    }
+  },
 
- addAnnotation: (annotation) => {
-   console.log('Adding annotation:', annotation);
-   set(state => ({
-     annotations: [...state.annotations, annotation],
-     pendingChanges: true
-   }));
- },
+  // State Management
+  clearState: () => set({
+    messages: [],
+    activePlan: null,
+    documents: { types: {} },
+    codeBlocks: [],
+    annotations: [],
+    error: null
+  }),
 
- clearState: () => {
-   console.log('Clearing project state');
-   set({
-     messages: [],
-     activePlan: null,
-     documents: { types: {} },
-     codeBlocks: [],
-     annotations: [],
-     error: null,
-     pendingChanges: false,
-     lastSaved: null
-   });
-   get().logEvent({ type: 'state_cleared' });
- },
+  loadProjectState: async (project) => {
+    const state = get();
 
- loadState: async (projectId) => {
-   console.log('Loading project state:', projectId);
-   try {
-     const state = get();
-     const project = state.projects[projectId];
-     
-     if (!project) {
-       throw new Error('Project not found');
-     }
+    try {
+      // Set namespace first if not already set
+      if (project.metadata.namespace && project.metadata.namespace !== state.currentNamespace) {
+        await state.setCurrentNamespace(project.metadata.namespace);
+      }
 
-     // First clear existing state
-     state.clearState();
+      // Load state components
+      set({
+        messages: project.state.messages || [],
+        activePlan: project.state.activePlan ? {
+          ...project.state.activePlan,
+          namespace: project.metadata.namespace
+        } : null,
+        codeBlocks: project.state.codeBlocks || [],
+        annotations: project.state.annotations || [],
+        error: null,
+        isLoading: false
+      });
 
-     // Then load new state with validation
-     if (validateMessages(project.state.messages)) {
-       set({ messages: project.state.messages });
-     }
+    } catch (error) {
+      console.error('Error loading project state:', error);
+      throw error;
+    }
+  },
 
-     if (project.state.activePlan) {
-       set({ activePlan: project.state.activePlan });
-     }
+  getState: () => {
+    const state = get();
+    return {
+      messages: state.messages,
+      activePlan: state.activePlan,
+      documents: state.documents,
+      codeBlocks: state.codeBlocks,
+      annotations: state.annotations
+    };
+  },
 
-     if (validateDocuments(project.state.documents)) {
-       set({ documents: project.state.documents });
-     }
-
-     if (validateCodeBlocks(project.state.codeBlocks)) {
-       set({ codeBlocks: project.state.codeBlocks });
-     }
-
-     if (Array.isArray(project.state.annotations)) {
-       set({ annotations: project.state.annotations });
-     }
-
-     set({
-       error: null,
-       isLoading: false,
-       pendingChanges: false
-     });
-
-     state.logEvent({ type: 'state_loaded', payload: { projectId } });
-
-   } catch (error) {
-     console.error('Error loading project state:', error);
-     get().logError(error as Error);
-     throw error;
-   }
- },
-
- getState: () => {
-   const state = get();
-   return {
-     messages: state.messages,
-     activePlan: state.activePlan,
-     documents: state.documents,
-     codeBlocks: state.codeBlocks,
-     annotations: state.annotations,
-     metadata: {
-       lastModified: new Date().toISOString(),
-       modifiedBy: 'current-user'
-     }
-   };
- },
-
- validateState: () => {
-   const state = get().getState();
-   return (
-     validateMessages(state.messages) &&
-     validateCodeBlocks(state.codeBlocks) &&
-     validateDocuments(state.documents) &&
-     Array.isArray(state.annotations)
-   );
- },
-
- setIsLoading: (loading) => set({ isLoading: loading }),
- 
- setError: (error) => {
-   console.log('Setting error:', error);
-   set({ error });
- },
- 
- logError: (error: Error) => {
-   console.error('Chat store error:', error);
-   set({ 
-     lastError: error,
-     error: error.message 
-   });
-   get().logEvent({ type: 'error_occurred', payload: { error: error.message } });
- },
- 
- clearError: () => {
-   console.log('Clearing error state');
-   set({ error: null, lastError: null });
- },
-
- logEvent: (event) => {
-  console.log('Logging event:', event.type);
-  set(state => ({
-    eventLog: [...state.eventLog, { ...event, timestamp: Date.now() }]
-  }));
-},
-
-getEvents: (since = 0) => get().eventLog.filter(event => event.timestamp > since),
-
-clearEvents: () => {
-  console.log('Clearing event log');
-  set({ eventLog: [] });
-}
+  // Status Actions
+  setIsLoading: (loading) => set({ isLoading: loading }),
+  setError: (error) => set({ error })
 }));
 
+// Export hooks for accessing store state
 export const useCurrentProject = () => {
-const messages = useChatStore(state => state.messages);
-const activePlan = useChatStore(state => state.activePlan);
-return { messages, activePlan };
+  const messages = useChatStore(state => state.messages);
+  const activePlan = useChatStore(state => state.activePlan);
+  return { messages, activePlan };
 };
 
 export const useMessages = () => useChatStore(state => state.messages);
@@ -526,8 +385,3 @@ export const useActivePlan = () => useChatStore(state => state.activePlan);
 export const useDocuments = () => useChatStore(state => state.documents);
 export const useCodeBlocks = () => useChatStore(state => state.codeBlocks);
 export const useAnnotations = () => useChatStore(state => state.annotations);
-
-export const useHasChanges = () => {
-const state = useChatStore.getState();
-return state.pendingChanges;
-};

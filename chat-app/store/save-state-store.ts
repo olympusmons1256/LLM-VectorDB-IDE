@@ -2,6 +2,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { useChatStore } from './chat-store';
+import { useInitializationStore } from './initialization-store';
+import { validateUserProfile, validateProjectState, ensureValidProject } from '@/utils/store-validation';
 import type { 
   ProjectState, 
   SaveStateHistory, 
@@ -24,6 +26,7 @@ interface SaveStateStore {
   autoSaveInterval: NodeJS.Timeout | null;
 
   // Actions
+  initializeUserSession: () => Promise<void>;
   setCurrentUser: (user: UserProfile | null) => void;
   createProject: (metadata: Partial<ProjectMetadata>) => Promise<string>;
   loadProject: (projectId: string) => Promise<void>;
@@ -63,17 +66,70 @@ export const useSaveStateStore = create<SaveStateStore>()(
       autoSaveEnabled: true,
       autoSaveInterval: null,
 
-      // User management
-      setCurrentUser: (user) => {
-        console.log('Setting current user:', user?.id);
-        set({ currentUser: user });
+      // Initialize user session and check for existing session
+      initializeUserSession: async () => {
+        const initStore = useInitializationStore.getState();
+        try {
+          // Check for existing session
+          const savedUser = localStorage.getItem('simplifide-current-user');
+          if (savedUser) {
+            const userData = JSON.parse(savedUser);
+            const validation = validateUserProfile(userData);
+            if (validation.isValid) {
+              // Set current user and advance to project stage
+              set({ currentUser: userData });
+              initStore.setStage('project');
+
+              // Check for active project
+              const savedProject = localStorage.getItem('simplifide-active-project');
+              if (savedProject) {
+                const projectData = JSON.parse(savedProject);
+                if (projectData?.id && get().projects[projectData.id]) {
+                  // Load the active project
+                  await get().loadProject(projectData.id);
+                }
+              }
+              return;
+            }
+          }
+
+          // No valid session found, stay in auth stage
+          initStore.setStage('auth');
+        } catch (error) {
+          console.error('Error initializing user session:', error);
+          localStorage.removeItem('simplifide-current-user');
+          localStorage.removeItem('simplifide-active-project');
+          initStore.setStage('auth');
+          throw error;
+        }
       },
 
-      // Project management
+      setCurrentUser: (user) => {
+        if (user) {
+          const validation = validateUserProfile(user);
+          if (!validation.isValid) {
+            throw new Error(`Invalid user profile: ${validation.errors.map(e => e.message).join(', ')}`);
+          }
+        }
+
+        // Save user to local storage
+        if (user) {
+          localStorage.setItem('simplifide-current-user', JSON.stringify(user));
+        } else {
+          localStorage.removeItem('simplifide-current-user');
+          localStorage.removeItem('simplifide-active-project');
+        }
+
+        set({ currentUser: user });
+        useInitializationStore.getState().setStage(user ? 'project' : 'auth');
+      },
+
       createProject: async (metadata) => {
         console.log('Creating new project:', metadata);
         const currentUser = get().currentUser;
-        if (!currentUser) throw new Error('No user logged in');
+        if (!currentUser) {
+          throw new Error('No user logged in');
+        }
 
         const projectId = generateId();
         const timestamp = new Date().toISOString();
@@ -92,13 +148,7 @@ export const useSaveStateStore = create<SaveStateStore>()(
             version: 1,
             ...metadata
           },
-          history: {
-            projectId,
-            versions: [],
-            current: 0
-          },
           state: {
-            metadata: {} as ProjectMetadata,
             messages: [],
             activePlan: null,
             documents: {
@@ -108,92 +158,148 @@ export const useSaveStateStore = create<SaveStateStore>()(
             annotations: []
           },
           config: {
-            autoSave: DEFAULT_AUTO_SAVE_CONFIG,
+            apiKeys: {
+              anthropic: '',
+              openai: '',
+              pinecone: '',
+              voyage: ''  
+            },
+            vectorDBConfig: {
+              cloud: 'aws',
+              region: 'us-east-1',
+              indexName: ''
+            },
+            autoSave: true,
             collaborators: [{
               id: currentUser.id,
               role: 'owner'
             }]
+          },
+          history: {
+            versions: [],
+            current: -1
           }
         };
 
-        console.log('Setting new project in store:', projectId);
+        ensureValidProject(newProject);
+        
         set(state => ({
           projects: {
             ...state.projects,
             [projectId]: newProject
-          },
-          activeProject: projectId,
-          pendingChanges: false,
-          lastSaved: timestamp
+          }
         }));
 
+        // Store active project
+        localStorage.setItem('simplifide-active-project', JSON.stringify({
+          id: projectId,
+          lastAccessed: timestamp
+        }));
+
+        await get().setActiveProject(projectId);
+        useInitializationStore.getState().setStage('config');
         return projectId;
       },
 
       loadProject: async (projectId) => {
         console.log('Loading project:', projectId);
-        const project = get().projects[projectId];
-        if (!project) {
-          console.error('Project not found:', projectId);
-          throw new Error('Project not found');
-        }
-
-        const currentUser = get().currentUser;
-        if (!currentUser) {
-          console.error('No user logged in');
-          throw new Error('No user logged in');
-        }
+        const store = get();
+        const initStore = useInitializationStore.getState();
         
-        const userAccess = project.config.collaborators.find(c => c.id === currentUser.id);
-        if (!userAccess) {
-          console.error('Access denied for user:', currentUser.id);
-          throw new Error('Access denied');
+        try {
+          const project = store.projects[projectId];
+          if (!project) {
+            throw new Error('Project not found');
+          }
+
+          const currentUser = store.currentUser;
+          if (!currentUser) {
+            throw new Error('No user logged in');
+          }
+          
+          const userAccess = project.config.collaborators.find(c => c.id === currentUser.id);
+          if (!userAccess) {
+            throw new Error('Access denied');
+          }
+
+          store.cleanupAutoSave();
+
+          set({ 
+            activeProject: projectId,
+            pendingChanges: false,
+            lastSaved: new Date().toISOString()
+          });
+
+          // Store active project
+          localStorage.setItem('simplifide-active-project', JSON.stringify({
+            id: projectId,
+            lastAccessed: new Date().toISOString()
+          }));
+
+          const chatStore = useChatStore.getState();
+          
+          if (project.config) {
+            // First set the API keys and vector DB config
+            await chatStore.setAPIKeys(project.config.apiKeys);
+            await chatStore.setVectorDBConfig(project.config.vectorDBConfig);
+
+            // Only move to next stages if config is valid
+            if (project.config.apiKeys.pinecone && 
+                project.config.apiKeys.voyage && 
+                project.config.vectorDBConfig.indexName) {
+              
+              // Now safe to advance to config stage
+              initStore.setStage('config');
+
+              // Set up namespace
+              await chatStore.setCurrentNamespace(project.metadata.namespace);
+              initStore.setStage('documents');
+
+              // Load project state
+              await chatStore.loadProjectState(project);
+              
+              // Enable auto-save if configured
+              if (store.autoSaveEnabled) {
+                store.initializeAutoSave();
+              }
+
+              // Complete initialization
+              initStore.setStage('chat');
+              initStore.setStage('plans');
+              initStore.setStage('complete');
+            } else {
+              console.warn('Project configuration incomplete:', projectId);
+            }
+          }
+
+        } catch (error) {
+          console.error('Error loading project:', error);
+          initStore.setError('Failed to load project');
+          throw error;
         }
-
-        get().cleanupAutoSave();
-
-        console.log('Setting active project:', projectId);
-        set({ 
-          activeProject: projectId,
-          pendingChanges: false,
-          lastSaved: new Date().toISOString()
-        });
-
-        const chatStore = useChatStore.getState();
-        if (project.metadata.namespace) {
-          console.log('Setting chat store namespace:', project.metadata.namespace);
-          await chatStore.setCurrentNamespace(project.metadata.namespace);
-        }
-
-        if (get().autoSaveEnabled) {
-          get().initializeAutoSave();
-        }
-
-        console.log('Project load complete:', {
-          activeProject: projectId,
-          namespace: project.metadata.namespace,
-          chatNamespace: useChatStore.getState().currentNamespace
-        });
       },
 
       saveProject: async (projectId, state) => {
-        console.log('Saving project:', projectId);
-        const project = get().projects[projectId];
+        const store = get();
+        const project = store.projects[projectId];
         if (!project) {
-          console.error('Project not found:', projectId);
           throw new Error('Project not found');
         }
 
-        const currentUser = get().currentUser;
+        const currentUser = store.currentUser;
         if (!currentUser) {
-          console.error('No user logged in');
           throw new Error('No user logged in');
         }
 
         const timestamp = new Date().toISOString();
         const newVersion = project.metadata.version + 1;
 
-        const historyCopy = { ...project.history };
+        const historyCopy: SaveStateHistory = {
+          projectId,
+          versions: [...project.history.versions],
+          current: project.history.versions.length
+        };
+
         historyCopy.versions.push({
           version: newVersion,
           timestamp,
@@ -202,11 +308,9 @@ export const useSaveStateStore = create<SaveStateStore>()(
           state: { ...project.state, ...state }
         });
 
-        while (historyCopy.versions.length > project.config.autoSave.maxVersions) {
+        while (historyCopy.versions.length > DEFAULT_AUTO_SAVE_CONFIG.maxVersions) {
           historyCopy.versions.shift();
         }
-
-        historyCopy.current = historyCopy.versions.length - 1;
 
         const updatedProject = {
           ...project,
@@ -219,7 +323,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
           history: historyCopy
         };
 
-        console.log('Updating project in store:', projectId);
+        ensureValidProject(updatedProject);
+
         set(state => ({
           projects: {
             ...state.projects,
@@ -235,10 +340,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
       },
 
       updateProjectMetadata: async (projectId, metadata) => {
-        console.log('Updating project metadata:', projectId);
         const currentUser = get().currentUser;
         if (!currentUser) {
-          console.error('No user logged in');
           throw new Error('No user logged in');
         }
 
@@ -247,7 +350,6 @@ export const useSaveStateStore = create<SaveStateStore>()(
         set(state => {
           const project = state.projects[projectId];
           if (!project) {
-            console.error('Project not found:', projectId);
             throw new Error('Project not found');
           }
 
@@ -260,7 +362,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
             }
           };
 
-          console.log('Updated project metadata:', updatedProject.metadata);
+          ensureValidProject(updatedProject);
+
           return {
             projects: {
               ...state.projects,
@@ -276,31 +379,27 @@ export const useSaveStateStore = create<SaveStateStore>()(
       },
 
       deleteProject: async (projectId) => {
-        console.log('Deleting project:', projectId);
         const currentUser = get().currentUser;
         if (!currentUser) {
-          console.error('No user logged in');
           throw new Error('No user logged in');
         }
 
         const project = get().projects[projectId];
         if (!project) {
-          console.error('Project not found:', projectId);
           throw new Error('Project not found');
         }
 
         if (project.metadata.owner !== currentUser.id) {
-          console.error('Permission denied for user:', currentUser.id);
           throw new Error('Permission denied');
         }
-
+        
         if (get().activeProject === projectId) {
           get().cleanupAutoSave();
+          localStorage.removeItem('simplifide-active-project');
         }
 
         set(state => {
           const { [projectId]: removed, ...remainingProjects } = state.projects;
-          console.log('Removed project from store:', projectId);
           return {
             projects: remainingProjects,
             activeProject: state.activeProject === projectId ? null : state.activeProject
@@ -313,24 +412,30 @@ export const useSaveStateStore = create<SaveStateStore>()(
       },
 
       setActiveProject: (projectId) => {
-        console.log('Setting active project:', projectId);
         if (projectId === get().activeProject) return;
-
+        
         get().cleanupAutoSave();
         set({ activeProject: projectId });
-
-        if (projectId && get().autoSaveEnabled) {
-          get().initializeAutoSave();
+        
+        if (projectId) {
+          localStorage.setItem('simplifide-active-project', JSON.stringify({
+            id: projectId,
+            lastAccessed: new Date().toISOString()
+          }));
+          
+          if (get().autoSaveEnabled) {
+            get().initializeAutoSave();
+          }
+        } else {
+          localStorage.removeItem('simplifide-active-project');
         }
       },
 
       setPendingChanges: (hasPendingChanges) => {
-        console.log('Setting pending changes:', hasPendingChanges);
         set({ pendingChanges: hasPendingChanges });
       },
 
       toggleAutoSave: (enabled = !get().autoSaveEnabled) => {
-        console.log('Toggling auto-save:', enabled);
         set({ autoSaveEnabled: enabled });
         get().cleanupAutoSave();
 
@@ -340,10 +445,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
       },
 
       exportProject: async (projectId) => {
-        console.log('Exporting project:', projectId);
         const project = get().projects[projectId];
         if (!project) {
-          console.error('Project not found:', projectId);
           throw new Error('Project not found');
         }
 
@@ -359,10 +462,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
       },
 
       importProject: async (file) => {
-        console.log('Importing project from file');
         const currentUser = get().currentUser;
         if (!currentUser) {
-          console.error('No user logged in');
           throw new Error('No user logged in');
         }
 
@@ -371,12 +472,11 @@ export const useSaveStateStore = create<SaveStateStore>()(
           const importData = JSON.parse(content);
 
           if (!importData.project?.metadata) {
-            console.error('Invalid project file format');
             throw new Error('Invalid project file format');
           }
 
-          const projectId = generateId();
           const timestamp = new Date().toISOString();
+          const projectId = generateId();
 
           const importedProject: SavedProject = {
             ...importData.project,
@@ -398,7 +498,8 @@ export const useSaveStateStore = create<SaveStateStore>()(
             }
           };
 
-          console.log('Setting imported project in store:', projectId);
+          ensureValidProject(importedProject);
+
           set(state => ({
             projects: {
               ...state.projects,
@@ -407,6 +508,7 @@ export const useSaveStateStore = create<SaveStateStore>()(
           }));
 
           return projectId;
+
         } catch (error) {
           console.error('Error importing project:', error);
           throw new Error('Failed to import project: Invalid file format');
@@ -441,6 +543,7 @@ export const useSaveStateStore = create<SaveStateStore>()(
           set({ autoSaveInterval: null });
         }
       }
+
     }),
     {
       name: 'simplifide-save-state',

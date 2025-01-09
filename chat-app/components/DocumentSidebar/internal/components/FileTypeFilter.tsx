@@ -1,8 +1,17 @@
 // components/DocumentSidebar/internal/components/FileTypeFilter.tsx
+import { useState, useEffect } from 'react';
 import { useDocumentSidebarState } from '../state';
+import { useSaveStateStore } from '@/store/save-state-store';
 
 export function FileTypeFilter() {
-  const { selectedType, setSelectedType, documents, currentNamespace } = useDocumentSidebarState();
+  const { 
+    selectedType, 
+    setSelectedType, 
+    documents, 
+    currentNamespace 
+  } = useDocumentSidebarState();
+  
+  const { activeProject, projects } = useSaveStateStore();
   const docs = documents[currentNamespace] || [];
 
   // Debug first document structure
@@ -15,6 +24,7 @@ export function FileTypeFilter() {
     });
   }
 
+  // Debug individual document being categorized
   const getCategory = (doc: any) => {
     // Debug individual document being categorized
     console.log('Categorizing doc:', {
@@ -33,7 +43,7 @@ export function FileTypeFilter() {
     if (filename.includes('/types/') || filename.includes('.types.') || filename.includes('.d.ts')) return 'type';
     if (filename.includes('config') || filename.endsWith('.env')) return 'config';
     if (filename.endsWith('.css') || filename.endsWith('.scss') || filename.includes('style')) return 'style';
-    if (filename.includes('.test.') || filename.includes('.spec.')) return 'test';
+    if (filename.endsWith('.test.') || filename.endsWith('.spec.')) return 'test';
     if (filename.endsWith('.md') || filename.includes('/docs/')) return 'doc';
     
     // Default to 'unknown' but log it for debugging
@@ -53,27 +63,74 @@ export function FileTypeFilter() {
 
   const fileTypes = [
     { value: '', label: 'All Files', category: 'all' },
-    { value: 'app', label: 'App Components' },
-    { value: 'component', label: 'UI Components' },
-    { value: 'util', label: 'Utils & Hooks' },
-    { value: 'api', label: 'API Routes' },
-    { value: 'type', label: 'Types & Interfaces' },
-    { value: 'config', label: 'Config Files' },
-    { value: 'style', label: 'Styles' },
-    { value: 'test', label: 'Tests' },
-    { value: 'doc', label: 'Documentation' }
+    { value: 'app', label: 'App Components', category: 'app' },
+    { value: 'component', label: 'UI Components', category: 'component' },
+    { value: 'util', label: 'Utils & Hooks', category: 'util' },
+    { value: 'api', label: 'API Routes', category: 'api' },
+    { value: 'type', label: 'Types & Interfaces', category: 'type' },
+    { value: 'config', label: 'Config Files', category: 'config' },
+    { value: 'style', label: 'Styles', category: 'style' },
+    { value: 'test', label: 'Tests', category: 'test' },
+    { value: 'doc', label: 'Documentation', category: 'doc' }
   ];
+
+  const handleTypeChange = (newType: string) => {
+    console.log('Changing file type filter:', newType);
+    setSelectedType(newType || null);
+    
+    // Persist the selection in localStorage
+    try {
+      const savedState = localStorage.getItem('document-sidebar-state') || '{}';
+      const state = JSON.parse(savedState);
+      localStorage.setItem('document-sidebar-state', JSON.stringify({
+        ...state,
+        selectedType: newType || null
+      }));
+    } catch (error) {
+      console.error('Error persisting file type selection:', error);
+    }
+  };
+
+  // Update the auto-save state if available
+  useEffect(() => {
+    if (activeProject) {
+      const project = projects[activeProject];
+      if (project) {
+        const updatedProject = {
+          ...project,
+          state: {
+            ...project.state,
+            documents: {
+              ...project.state.documents,
+              selectedType
+            }
+          },
+          metadata: {
+            ...project.metadata,
+            updated: new Date().toISOString()
+          }
+        };
+        // Save the updated project state
+        projects[activeProject] = updatedProject;
+        localStorage.setItem('simplifide-save-state', JSON.stringify({
+          projects,
+          currentUser: useSaveStateStore.getState().currentUser,
+          autoSaveEnabled: useSaveStateStore.getState().autoSaveEnabled
+        }));
+      }
+    }
+  }, [selectedType, activeProject, projects]);
 
   return (
     <div className="mb-4">
       <label className="block text-sm font-medium text-foreground mb-2">Show</label>
       <select
         value={selectedType || ''}
-        onChange={(e) => setSelectedType(e.target.value || null)}
+        onChange={(e) => handleTypeChange(e.target.value)}
         className="w-full p-2 rounded-lg border dark:border-gray-700 
-                 bg-background text-foreground
-                 focus:outline-none focus:ring-1 focus:ring-primary
-                 transition-colors"
+                  bg-background text-foreground
+                  focus:outline-none focus:ring-1 focus:ring-primary
+                  transition-colors"
       >
         {fileTypes.map(type => {
           const count = categoryCounts[type.category || type.value] || 0;

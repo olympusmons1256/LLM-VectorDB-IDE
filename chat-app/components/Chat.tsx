@@ -1,3 +1,4 @@
+// components/Chat.tsx
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -10,6 +11,7 @@ import type { Message } from '@/types/message';
 import type { CodeAnnotation } from '@/types/code-block';
 import { useCurrentProject, useChatStore } from '@/store/chat-store';
 import { createPlan, updatePlan } from '@/services/plans';
+import { useInitializationStore } from '@/store/initialization-store';
 
 interface Model {
   provider: 'anthropic' | 'openai';
@@ -20,7 +22,7 @@ interface Model {
 const MODEL_OPTIONS: Model[] = [
   { provider: 'anthropic', id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
   { provider: 'anthropic', id: 'claude-3-sonnet-20240229', name: 'Claude 3 Sonnet' },
-  { provider: 'anthropic', id: 'claude-3-haiku-20240229', name: 'Claude 3 Haiku' },
+  { provider: 'anthropic', id: 'claude-3-haiku-20240229', name: 'Claude 3 Haiku' },  
   { provider: 'openai', id: 'gpt-4-turbo-preview', name: 'GPT-4 Turbo' },
   { provider: 'openai', id: 'gpt-4', name: 'GPT-4' },
   { provider: 'openai', id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
@@ -382,7 +384,7 @@ export function Chat({
   const vectorDBConfig = useChatStore((state) => state.vectorDBConfig);
   const apiKeys = useChatStore((state) => state.apiKeys);
   const setActivePlan = useChatStore((state) => state.setActivePlan);
-
+  const { stage } = useInitializationStore();
   const scrollToBottom = useCallback(() => {
     if (scrollTimeoutRef.current) {
       clearTimeout(scrollTimeoutRef.current);
@@ -504,7 +506,7 @@ export function Chat({
     }
   }, [selectedModel, activePlan, handleSendMessage, apiKeys, vectorDBConfig, setActivePlan]);
 
-  if (!mounted) return null;
+  if (!mounted || stage !== 'complete') return null;
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

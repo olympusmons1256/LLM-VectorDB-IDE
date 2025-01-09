@@ -1,377 +1,403 @@
 // components/DocumentSidebar/internal/state.ts
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { REFRESH_INTERVAL, REFRESH_COOLDOWN, MAX_CHUNK_SIZE } from './constants';
 import type { EmbeddingConfig } from '@/services/embedding';
-import type { DocumentMetadata, LoadingState, NamespaceStats, IndexedDocument } from './types';
-
-const POLLING_INTERVAL = 30000; // 30 seconds
-const DEBOUNCE_DELAY = 1000; // 1 second
-const INITIAL_LOAD_DELAY = 1000; // 1 second delay before first load
+import type { IndexedDocument, NamespaceStats, LoadingState, WorkspaceValidationError } from './types';
+import { debounce } from '@/lib/utils';
+import { useChatStore } from '@/store/chat-store';
 
 interface DocumentSidebarState {
+  // Configuration
   config: EmbeddingConfig | null;
   isConfigured: boolean;
   isLoading: boolean;
   loadingState: LoadingState;
   lastRefreshTime: number;
+  lastError: string | null;
   activeRequest: AbortController | null;
+  sidebarVisible: boolean;
+
+  // State
   documents: Record<string, IndexedDocument[]>;
   namespaces: Record<string, NamespaceStats>;
+  currentNamespace: string;
   selectedType: string | null;
   sortOrder: 'asc' | 'desc';
-  currentNamespace: string;
+  validationErrors: WorkspaceValidationError[];
+
+  // Actions
   initialize: (config: EmbeddingConfig) => void;
   setLoadingState: (state: LoadingState) => void;
   setDocuments: (namespace: string, docs: IndexedDocument[]) => void;
+  updateDocument: (namespace: string, filename: string, update: Partial<IndexedDocument>) => void;
   setNamespaces: (namespaces: Record<string, NamespaceStats>) => void;
   setSelectedType: (type: string | null) => void;
   setSortOrder: (order: 'asc' | 'desc') => void;
+  setSidebarVisible: (visible: boolean) => void;
+  setError: (error: string | null) => void;
+  
+  // Operations
   refreshNamespaces: () => Promise<void>;
   refreshDocuments: (namespace: string) => Promise<void>;
   refreshAll: (namespace: string) => Promise<void>;
+  ensureNamespace: (namespace: string) => Promise<void>;
+  deleteNamespace: (namespace: string) => Promise<void>;
+  processDocument: (file: File, namespace: string) => Promise<void>;
+  clearNamespaceData: (namespace: string) => void;
+  validateState: () => WorkspaceValidationError[];
 }
 
-const INITIAL_STATE = {
-  config: null,
-  isConfigured: false,
-  isLoading: false,
-  loadingState: { isLoading: false, status: '' },
-  lastRefreshTime: 0,
-  activeRequest: null,
-  documents: {},
-  namespaces: {},
-  selectedType: null,
-  sortOrder: 'desc',
-  currentNamespace: ''
-};
+export const useDocumentSidebarState = create<DocumentSidebarState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      config: null,
+      isConfigured: false,
+      isLoading: false,
+      loadingState: { isLoading: false, status: '' },
+      lastRefreshTime: 0,
+      lastError: null,
+      activeRequest: null,
+      documents: {},
+      namespaces: {},
+      currentNamespace: '',
+      selectedType: null,
+      sortOrder: 'desc',
+      sidebarVisible: true,
+      validationErrors: [],
 
-// Cache for storing recently fetched data
-const cache = new Map<string, { data: any; timestamp: number }>();
+      initialize: (config) => {
+        const isConfigValid = Boolean(
+          config?.apiKeys?.pinecone &&
+          config?.vectordb?.indexName
+        );
 
-export const useDocumentSidebarState = create<DocumentSidebarState>((set, get) => ({
-  ...INITIAL_STATE,
+        set({ 
+          config, 
+          isConfigured: isConfigValid,
+          loadingState: { isLoading: false, status: '' }
+        });
 
-  initialize: (config) => {
-    const state = get();
-    console.log('Initializing with config:', {
-      indexName: config?.vectordb?.indexName,
-      cloud: config?.vectordb?.cloud,
-      region: config?.vectordb?.region,
-      hasPineconeKey: !!config?.apiKeys?.pinecone,
-      hasVoyageKey: !!config?.apiKeys?.voyage
-    });
-
-    // Only update if config actually changed
-    if (JSON.stringify(state.config) === JSON.stringify(config)) {
-      console.log('Config unchanged, skipping initialization');
-      return;
-    }
-
-    const isConfigValid = Boolean(
-      config?.apiKeys?.pinecone &&
-      config?.vectordb?.indexName &&
-      config?.vectordb?.cloud &&
-      config?.vectordb?.region
-    );
-
-    console.log('Config validation:', { isConfigValid });
-
-    set({ 
-      config, 
-      isConfigured: isConfigValid,
-      loadingState: { isLoading: false, status: '' }
-    });
-
-    // Delay initial load
-    if (isConfigValid) {
-      console.log('Starting initial load with delay:', INITIAL_LOAD_DELAY);
-      setTimeout(async () => {
-        const currentState = get();
-        if (currentState.currentNamespace) {
-          console.log('Initial load for namespace:', currentState.currentNamespace);
-          try {
-            await currentState.refreshNamespaces();
-            await currentState.refreshDocuments(currentState.currentNamespace);
-          } catch (error) {
-            console.error('Error during initial load:', error);
-          }
-        } else {
-          console.log('No current namespace for initial load');
-          await currentState.refreshNamespaces();
+        // Initial namespace refresh if configured
+        if (isConfigValid) {
+          get().refreshNamespaces().catch(error => {
+            console.error('Error in initial refresh:', error);
+            set({ lastError: error.message });
+          });
         }
-      }, INITIAL_LOAD_DELAY);
-    }
-  },
+      },
 
-  setLoadingState: (loadingState) => set({ loadingState }),
-  
-  setDocuments: (namespace, docs) => set(state => ({
-    documents: { ...state.documents, [namespace]: docs }
-  })),
-  
-  setNamespaces: (namespaces) => {
-    console.log('Setting namespaces:', namespaces);
-    set({ namespaces });
-  },
-  setSelectedType: (selectedType) => set({ selectedType }),
-  setSortOrder: (sortOrder) => set({ sortOrder }),
-
-  refreshDocuments: async (namespace: string) => {
-    const state = get();
-    if (!state.config || !state.isConfigured || !namespace) {
-      console.log('Cannot refresh documents - invalid state:', {
-        hasConfig: !!state.config,
-        isConfigured: state.isConfigured,
-        namespace
-      });
-      return;
-    }
-
-    // Check cache first
-    const cacheKey = `docs-${namespace}`;
-    const cached = cache.get(cacheKey);
-    const now = Date.now();
-    
-    if (cached && now - cached.timestamp < POLLING_INTERVAL) {
-      console.log('Using cached documents for namespace:', namespace);
-      set(state => ({
-        documents: { ...state.documents, [namespace]: cached.data }
-      }));
-      return;
-    }
-
-    try {
-      // Cancel any ongoing request
-      if (state.activeRequest) {
-        state.activeRequest.abort();
-      }
-
-      const abortController = new AbortController();
-      set({ activeRequest: abortController });
-
-      set({
-        loadingState: { isLoading: true, status: 'Fetching documents...' }
-      });
-
-      console.log('Fetching documents for namespace:', namespace);
-
-      // First get all documents without filters to understand what's there
-      console.log('Fetching all documents to inspect metadata structure...');
-      const allDocsResponse = await fetch('/api/vector', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operation: 'query_context',
-          config: state.config,
-          text: 'list all documents',
-          namespace,
-          filter: null,
-          includeMetadata: true
-        }),
-        signal: abortController.signal
-      });
-
-      const allDocs = await allDocsResponse.json();
-      console.log('Raw document data:', {
-        firstDoc: allDocs.matches?.[0],
-        allDocs: allDocs.matches?.slice(0, 3), // Show first 3 docs
-        totalDocs: allDocs.matches?.length
-      });
-
-      // Now attempt filtered query
-      const response = await fetch('/api/vector', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          operation: 'query_context',
-          config: state.config,
-          text: 'list all documents',
-          namespace,
-          filter: { 
-            $and: [
-              { type: { $in: ['project-structure', 'core-architecture', 'code', 'documentation'] } },
-              { isComplete: { $eq: true } }
-            ]
-          }
-        }),
-        signal: abortController.signal
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch documents');
-      }
-
-      const data = await response.json();
-      console.log('Filtered document data:', {
-        matchCount: data.matches?.length,
-        sampleMatch: data.matches?.[0],
-        namespace,
-        firstThreeDocs: data.matches?.slice(0, 3).map((d: any) => ({
-          filename: d.metadata?.filename,
-          metadata: d.metadata
-        }))
-      });
+      setLoadingState: (loadingState) => set({ loadingState }),
       
-      // Process and deduplicate documents
-      const uniqueDocs = new Map();
-      (data.matches || []).forEach((doc: IndexedDocument) => {
-        const filename = doc.metadata?.filename;
-        if (!filename) {
-          console.log('Document missing filename:', doc);
+      setDocuments: (namespace, docs) => set(state => ({
+        documents: { ...state.documents, [namespace]: docs },
+        lastRefreshTime: Date.now()
+      })),
+
+      updateDocument: (namespace, filename, update) => set(state => ({
+        documents: {
+          ...state.documents,
+          [namespace]: state.documents[namespace]?.map(doc =>
+            doc.metadata?.filename === filename ? { ...doc, ...update } : doc
+          ) || []
+        }
+      })),
+      
+      setNamespaces: (namespaces) => set({ namespaces }),
+
+      setSelectedType: (selectedType) => set({ selectedType }),
+
+      setSortOrder: (sortOrder) => set({ sortOrder }),
+
+      setSidebarVisible: (visible) => set({ sidebarVisible: visible }),
+
+      setError: (error) => set({ lastError: error }),
+
+      refreshNamespaces: async () => {
+        const state = get();
+        if (!state.config || !state.isConfigured) return;
+
+        try {
+          set({ loadingState: { isLoading: true, status: 'Fetching namespaces...' } });
+
+          const response = await fetch('/api/vector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operation: 'list_namespaces',
+              config: state.config
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to fetch namespaces');
+          }
+
+          const data = await response.json();
+          if (data.namespaces) {
+            set({ 
+              namespaces: data.namespaces,
+              loadingState: { isLoading: false, status: '' },
+              lastError: null
+            });
+          }
+
+        } catch (error) {
+          console.error('Error fetching namespaces:', error);
+          set(state => ({
+            loadingState: {
+              isLoading: false,
+              error: error.message,
+              status: 'Error loading namespaces'
+            },
+            lastError: error.message
+          }));
+          throw error;
+        }
+      },
+
+      refreshDocuments: async (namespace) => {
+        const state = get();
+        if (!state.isConfigured || !namespace) return;
+
+        // Check refresh cooldown
+        const timeSinceLastRefresh = Date.now() - state.lastRefreshTime;
+        if (timeSinceLastRefresh < REFRESH_COOLDOWN) {
+          console.log('Skipping refresh due to cooldown');
           return;
         }
-        
-        const existing = uniqueDocs.get(filename);
-        if (!existing || 
-            (doc.metadata?.isComplete && !existing.metadata?.isComplete) ||
-            (!existing.metadata?.isComplete && doc.metadata?.timestamp > existing.metadata?.timestamp)) {
-          uniqueDocs.set(filename, doc);
+
+        try {
+          set({ loadingState: { isLoading: true, status: 'Loading documents...' } });
+
+          const response = await fetch('/api/vector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operation: 'query_context',
+              config: state.config,
+              text: 'list all documents',
+              namespace,
+              filter: { isComplete: { $eq: true } }
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to fetch documents');
+          }
+
+          const data = await response.json();
+          const uniqueDocs = new Map<string, IndexedDocument>();
+          
+          (data.matches || []).forEach((doc: IndexedDocument) => {
+            const filename = doc.metadata?.filename;
+            if (!filename) return;
+            
+            const existing = uniqueDocs.get(filename);
+            if (!existing || 
+                (doc.metadata?.isComplete && !existing.metadata?.isComplete) ||
+                (!existing.metadata?.isComplete && doc.metadata?.timestamp > existing.metadata?.timestamp)) {
+              uniqueDocs.set(filename, doc);
+            }
+          });
+
+          state.setDocuments(namespace, Array.from(uniqueDocs.values()));
+          set({ lastError: null });
+
+        } catch (error) {
+          console.error('Error refreshing documents:', error);
+          set(state => ({
+            loadingState: {
+              isLoading: false,
+              error: error.message,
+              status: 'Error loading documents'
+            },
+            lastError: error.message
+          }));
+          throw error;
+        } finally {
+          set({ loadingState: { isLoading: false, status: '' } });
         }
-      });
+      },
 
-      const processedDocs = Array.from(uniqueDocs.values());
-      console.log('Processed documents:', {
-        total: processedDocs.length,
-        namespace,
-        firstThreeDocs: processedDocs.slice(0, 3).map(d => ({
-          filename: d.metadata?.filename,
-          metadata: d.metadata
-        }))
-      });
+      refreshAll: async (namespace) => {
+        const state = get();
+        if (!state.config || !state.isConfigured || !namespace) return;
 
-      // Update cache
-      cache.set(cacheKey, {
-        data: processedDocs,
-        timestamp: now
-      });
+        // Cancel any existing request
+        if (state.activeRequest) {
+          state.activeRequest.abort();
+        }
 
-      set(state => ({
-        documents: { ...state.documents, [namespace]: processedDocs },
-        lastRefreshTime: now,
-        loadingState: { isLoading: false, status: '' },
-        activeRequest: null
-      }));
+        const abortController = new AbortController();
+        set({ isLoading: true, activeRequest: abortController });
 
-    } catch (error: any) {
-      if (error.name === 'AbortError') return;
-      
-      console.error('Error fetching documents:', error);
-      set({
-        loadingState: {
-          isLoading: false,
-          status: 'Error loading documents',
-          error: error.message
-        },
-        activeRequest: null
-      });
-      throw error;
-    }
-  },
+        try {
+          await Promise.all([
+            state.refreshNamespaces(),
+            state.refreshDocuments(namespace)
+          ]);
 
-  refreshNamespaces: async () => {
-    const state = get();
-    if (!state.config || !state.isConfigured) {
-      console.log('Cannot refresh namespaces - not configured');
-      return;
-    }
+          set({ lastError: null });
 
-    try {
-      const cacheKey = 'namespaces';
-      const cached = cache.get(cacheKey);
-      const now = Date.now();
-      
-      if (cached && now - cached.timestamp < POLLING_INTERVAL) {
-        console.log('Using cached namespaces');
-        set({ namespaces: cached.data });
-        return;
-      }
+        } catch (error) {
+          console.error('Error refreshing all data:', error);
+          set(state => ({
+            loadingState: {
+              isLoading: false,
+              status: 'Error refreshing data',
+              error: error.message
+            },
+            lastError: error.message
+          }));
+          throw error;
+        } finally {
+          set({ 
+            isLoading: false,
+            activeRequest: null
+          });
+        }
+      },
 
-      set({
-        loadingState: { isLoading: true, status: 'Fetching namespaces...' }
-      });
+      ensureNamespace: async (namespace) => {
+        const state = get();
+        if (!state.config) return;
 
-      console.log('Attempting to fetch namespaces from /api/vector');
+        try {
+          const response = await fetch('/api/vector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operation: 'create_namespace',
+              config: state.config,
+              namespace
+            })
+          });
 
-      const requestBody = {
-        operation: 'list_namespaces',
-        config: state.config
-      };
-      
-      console.log('Request payload:', JSON.stringify(requestBody, null, 2));
+          if (!response.ok) {
+            throw new Error('Failed to create namespace');
+          }
 
-      const response = await fetch('/api/vector', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      }).catch(error => {
-        console.error('Fetch failed:', error);
-        throw new Error(`Network request failed: ${error.message}`);
-      });
+          await state.refreshNamespaces();
+          set({ lastError: null });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Server error response:', errorText);
-        throw new Error(`Server returned ${response.status}: ${errorText}`);
-      }
+        } catch (error) {
+          console.error('Error ensuring namespace:', error);
+          set({ lastError: error.message });
+          throw error;
+        }
+      },
 
-      const data = await response.json();
-      console.log('Namespaces response:', data);
+      deleteNamespace: async (namespace) => {
+        const state = get();
+        if (!state.config) return;
 
-      if (data.namespaces) {
-        cache.set(cacheKey, {
-          data: data.namespaces,
-          timestamp: now
+        try {
+          const response = await fetch('/api/vector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operation: 'delete_namespace',
+              config: state.config,
+              namespace
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to delete namespace');
+          }
+
+          state.clearNamespaceData(namespace);
+          await state.refreshNamespaces();
+          set({ lastError: null });
+
+        } catch (error) {
+          console.error('Error deleting namespace:', error);
+          set({ lastError: error.message });
+          throw error;
+        }
+      },
+
+      processDocument: async (file, namespace) => {
+        const state = get();
+        if (!state.config) return;
+
+        try {
+          const text = await file.text();
+          
+          const response = await fetch('/api/vector', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              operation: 'process_document',
+              config: state.config,
+              text,
+              filename: file.name,
+              namespace
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to process document');
+          }
+
+          await state.refreshDocuments(namespace);
+          set({ lastError: null });
+
+        } catch (error) {
+          console.error('Error processing document:', error);
+          set({ lastError: error.message });
+          throw error;
+        }
+      },
+
+      clearNamespaceData: (namespace) => {
+        set(state => {
+          const { [namespace]: _, ...remainingDocs } = state.documents;
+          return { documents: remainingDocs };
         });
-        set({ namespaces: data.namespaces });
+      },
+
+      validateState: () => {
+        const state = get();
+        const errors: WorkspaceValidationError[] = [];
+
+        if (!state.config?.apiKeys?.pinecone) {
+          errors.push({ field: 'config.apiKeys.pinecone', error: 'Pinecone API key is required' });
+        }
+
+        if (!state.config?.vectordb?.indexName) {
+          errors.push({ field: 'config.vectordb.indexName', error: 'Vector DB index name is required' });
+        }
+
+        // Validate documents structure
+        Object.entries(state.documents).forEach(([namespace, docs]) => {
+          if (!Array.isArray(docs)) {
+            errors.push({ field: `documents.${namespace}`, error: 'Documents must be an array' });
+          }
+          
+          docs.forEach((doc, index) => {
+            if (!doc.metadata?.filename) {
+              errors.push({ 
+                field: `documents.${namespace}[${index}].metadata.filename`,
+                error: 'Document filename is required'
+              });
+            }
+          });
+        });
+
+        set({ validationErrors: errors });
+        return errors;
       }
-
-    } catch (error: any) {
-      console.error('Error fetching namespaces:', error);
-      set(state => ({
-        loadingState: {
-          ...state.loadingState,
-          error: error.message,
-          status: 'Error loading namespaces'
-        }
-      }));
-    } finally {
-      set({ 
-        loadingState: { isLoading: false, status: '' }
-      });
+    }),
+    {
+      name: 'document-sidebar-state',
+      partialize: (state) => ({
+        selectedType: state.selectedType,
+        sortOrder: state.sortOrder,
+        sidebarVisible: state.sidebarVisible
+      })
     }
-  },
-
-  refreshAll: async (namespace: string) => {
-    const state = get();
-    if (!state.config || !state.isConfigured || !namespace) {
-      console.log('Cannot refresh all - invalid state:', {
-        hasConfig: !!state.config,
-        isConfigured: state.isConfigured,
-        namespace
-      });
-      return;
-    }
-    
-    set({ isLoading: true });
-    try {
-      console.log('Starting refresh all for namespace:', namespace);
-      await Promise.all([
-        state.refreshNamespaces(),
-        state.refreshDocuments(namespace)
-      ]);
-      console.log('Refresh all completed');
-    } catch (error: any) {
-      console.error('Error refreshing all data:', error);
-      set({
-        loadingState: {
-          isLoading: false,
-          status: 'Error refreshing data',
-          error: error.message
-        }
-      });
-    } finally {
-      set({ isLoading: false });
-    }
-  }
-}));
+  )
+);

@@ -1,5 +1,23 @@
 // services/plans.ts
 import type { EmbeddingConfig } from './embedding';
+import { validateUserProfile } from '@/utils/store-validation';
+import { useSaveStateStore } from '@/store/save-state-store';
+
+// Type Guards and Validation Interfaces
+export interface PlanValidation {
+  isValid: boolean;
+  errors: Array<{
+    field: string;
+    message: string;
+  }>;
+}
+
+export interface PlanOperationResult<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  validationErrors?: PlanValidation['errors'];
+}
 
 export interface Plan {
   id: string;
@@ -20,6 +38,13 @@ export interface Plan {
     complexity?: 'low' | 'medium' | 'high';
     priority?: 'low' | 'medium' | 'high';
     tags?: string[];
+    initiator?: string;
+    lastModifiedBy?: string;
+    versionInfo?: {
+      major: number;
+      minor: number;
+      patch: number;
+    };
     [key: string]: any;
   };
 }
@@ -38,10 +63,36 @@ export interface PlanStep {
     commands?: string[];
     rollback?: string;
     tests?: string[];
+    completedBy?: string;
+    completedAt?: string;
+    failureReason?: string;
+    retryCount?: number;
     [key: string]: any;
   };
 }
 
+// Type Guards
+export function isPlanStatus(status: string): status is Plan['status'] {
+  return ['active', 'completed', 'cancelled'].includes(status);
+}
+
+export function isStepStatus(status: string): status is PlanStep['status'] {
+  return ['pending', 'in_progress', 'completed', 'failed'].includes(status);
+}
+
+export function isPlanType(type: string): type is Plan['type'] {
+  return ['refactor', 'feature', 'bug', 'other'].includes(type);
+}
+
+export function isPlanComplexity(complexity: string): complexity is NonNullable<Plan['metadata']['complexity']> {
+  return ['low', 'medium', 'high'].includes(complexity);
+}
+
+export function isPlanPriority(priority: string): priority is NonNullable<Plan['metadata']['priority']> {
+  return ['low', 'medium', 'high'].includes(priority);
+}
+
+// ID Generation
 function generateUniqueId(prefix: string): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 15);
@@ -49,92 +100,56 @@ function generateUniqueId(prefix: string): string {
   return `${prefix}-${timestamp}-${random}-${counter}`;
 }
 
-function extractPlanDetails(content: string): { title: string; details: string } | null {
-  console.log('Extracting plan from content');
+// Validation Functions
+function validatePlan(plan: Plan): PlanValidation {
+  const errors: PlanValidation['errors'] = [];
 
-  const patterns = [
-    /## Plan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
-    /\bPlan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
-    /Here(?:'s| is) (?:the |a )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
-    /Let(?:'s| us) (create |make |implement |develop )(?:a |the )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i
-  ];
+  if (!plan.id) {
+    errors.push({ field: 'id', message: 'Plan ID is required' });
+  }
+  if (!plan.title) {
+    errors.push({ field: 'title', message: 'Plan title is required' });
+  }
+  if (!isPlanStatus(plan.status)) {
+    errors.push({ field: 'status', message: 'Invalid plan status' });
+  }
+  if (!isPlanType(plan.type)) {
+    errors.push({ field: 'type', message: 'Invalid plan type' });
+  }
+  if (plan.metadata.complexity && !isPlanComplexity(plan.metadata.complexity)) {
+    errors.push({ field: 'metadata.complexity', message: 'Invalid complexity level' });
+  }
+  if (plan.metadata.priority && !isPlanPriority(plan.metadata.priority)) {
+    errors.push({ field: 'metadata.priority', message: 'Invalid priority level' });
+  }
 
-  for (const pattern of patterns) {
-    const match = content.match(pattern);
-    if (match) {
-      const title = match[1].trim();
-      const details = match[2]?.trim() || content.trim();
-      if (details) {
-        console.log('Found plan with explicit pattern:', { title });
-        return { title, details };
-      }
+  // Validate steps
+  plan.steps.forEach((step, index) => {
+    if (!step.id) {
+      errors.push({ field: `steps[${index}].id`, message: 'Step ID is required' });
     }
-  }
-
-  const numberedListMatch = content.match(/(?:^|\n)\s*1\.\s+([^\n]+)(?:\n[\s\S]*)/);
-  if (numberedListMatch) {
-    const firstLine = numberedListMatch[1].trim();
-    const details = content.trim();
-    console.log('Found numbered list plan:', { firstLine });
-    return {
-      title: `Plan: ${firstLine}`,
-      details
-    };
-  }
-
-  console.log('No plan format found');
-  return null;
-}
-
-function extractSteps(content: string): PlanStep[] {
-  const stepPattern = /(?:^|\n)\s*(\d+)\.?\s*([^\n]+)(?:\n(?:\s*[-•].+\n?)*)?/gm;
-  const steps: PlanStep[] = [];
-  const timestamp = new Date().toISOString();
-  
-  let match;
-  while ((match = stepPattern.exec(content)) !== null) {
-    const [fullMatch, number, title] = match;
-    
-    const bulletPoints = fullMatch.match(/\s*[-•]\s*([^\n]+)/g) || [];
-    const description = bulletPoints
-      .map(point => point.replace(/^\s*[-•]\s*/, '').trim())
-      .join('\n');
-    
-    const stepId = generateUniqueId('step');
-    console.log('Found step:', { number, title: title.trim(), id: stepId });
-
-    steps.push({
-      id: stepId,
-      title: title.trim(),
-      description: description || '',
-      status: 'pending',
-      dependencies: [],
-      created: timestamp,
-      updated: timestamp,
-      metadata: {
-        estimatedTime: extractEstimatedTime(fullMatch),
-        affectedFiles: extractAffectedFiles(fullMatch),
-        commands: extractCommands(fullMatch),
-        tests: extractTests(fullMatch),
-        rollback: extractRollback(fullMatch)
-      }
-    });
-  }
-
-  // Add dependencies between consecutive steps
-  steps.forEach((step, index) => {
-    if (index > 0) {
-      step.dependencies.push(steps[index - 1].id);
+    if (!step.title) {
+      errors.push({ field: `steps[${index}].title`, message: 'Step title is required' });
+    }
+    if (!isStepStatus(step.status)) {
+      errors.push({ field: `steps[${index}].status`, message: 'Invalid step status' });
     }
   });
 
-  return steps;
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
 }
 
+// Main CRUD Operations
 export async function getActivePlans(config: EmbeddingConfig, namespace: string): Promise<Plan[]> {
-  try {
-    console.log('Fetching plans for namespace:', namespace);
+  const currentUser = useSaveStateStore.getState().currentUser;
+  if (!currentUser) {
+    throw new Error('User must be logged in to access plans');
+  }
 
+  try {
     const response = await fetch('/api/vector', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -154,7 +169,6 @@ export async function getActivePlans(config: EmbeddingConfig, namespace: string)
     }
 
     const data = await response.json();
-    console.log('Received plans data:', data);
     
     const plans = data.matches
       ?.filter((match: any) => match.metadata?.plan)
@@ -171,7 +185,6 @@ export async function getActivePlans(config: EmbeddingConfig, namespace: string)
         new Date(b.updated).getTime() - new Date(a.updated).getTime()
       );
 
-    console.log('Parsed plans:', plans.length);
     return plans;
 
   } catch (error: any) {
@@ -181,23 +194,20 @@ export async function getActivePlans(config: EmbeddingConfig, namespace: string)
 }
 
 export async function createPlan(content: string, config: EmbeddingConfig, namespace: string): Promise<Plan | null> {
+  const currentUser = useSaveStateStore.getState().currentUser;
+  if (!currentUser) {
+    throw new Error('User must be logged in to create a plan');
+  }
+
   try {
-    console.log('Creating plan from content');
     const planDetails = extractPlanDetails(content);
     if (!planDetails) {
-      console.log('No valid plan format found');
       return null;
     }
-
-    console.log('Extracted plan details:', {
-      title: planDetails.title,
-      detailsLength: planDetails.details.length
-    });
 
     const { title, details } = planDetails;
     const steps = extractSteps(details);
     if (steps.length === 0) {
-      console.log('No steps found in plan');
       return null;
     }
 
@@ -218,19 +228,18 @@ export async function createPlan(content: string, config: EmbeddingConfig, names
         sourceMessage: content,
         complexity: detectComplexity(details),
         priority: detectPriority(details),
+        initiator: currentUser.id,
+        lastModifiedBy: currentUser.id,
         ...extractMetadata(details)
       }
     };
 
-    console.log('Created plan:', {
-      id: plan.id,
-      title: plan.title,
-      steps: steps.length
-    });
+    const validation = validatePlan(plan);
+    if (!validation.isValid) {
+      throw new Error(`Invalid plan: ${validation.errors.map(e => e.message).join(', ')}`);
+    }
 
     await storePlan(plan, config);
-    console.log('Plan stored successfully');
-
     window.dispatchEvent(new CustomEvent('planCreated', { detail: plan }));
     return plan;
 
@@ -240,67 +249,31 @@ export async function createPlan(content: string, config: EmbeddingConfig, names
   }
 }
 
-async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
-  try {
-    console.log('Storing plan:', plan.id);
-    
-    if (!plan.namespace) {
-      throw new Error('Plan namespace is required');
-    }
-
-    const planText = JSON.stringify(plan);
-    const metadata = {
-      filename: `plan-${plan.id}.json`,
-      type: 'plan',
-      planId: plan.id,
-      status: plan.status,
-      plan: planText,
-      isComplete: true,
-      timestamp: new Date().toISOString()
-    };
-
-    // Add some logging to help debug the request
-    console.log('Storing plan with metadata:', metadata);
-    console.log('Using namespace:', plan.namespace);
-
-    const storeResponse = await fetch('/api/vector', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operation: 'process_document',
-        config,
-        text: planText,
-        filename: metadata.filename,
-        namespace: plan.namespace,
-        metadata
-      })
-    });
-
-    if (!storeResponse.ok) {
-      const errorData = await storeResponse.json();
-      console.error('Store plan response:', errorData);
-      throw new Error(errorData.error || 'Failed to store plan');
-    }
-
-    // Wait for indexing
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-  } catch (error) {
-    console.error('Error storing plan:', error);
-    throw error;
-  }
-}
-
 export async function updatePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
+  const currentUser = useSaveStateStore.getState().currentUser;
+  if (!currentUser) {
+    throw new Error('User must be logged in to update a plan');
+  }
+
+  const validation = validatePlan(plan);
+  if (!validation.isValid) {
+    throw new Error(`Invalid plan: ${validation.errors.map(e => e.message).join(', ')}`);
+  }
+
   plan.updated = new Date().toISOString();
+  plan.metadata.lastModifiedBy = currentUser.id;
+
   await storePlan(plan, config);
   window.dispatchEvent(new CustomEvent('planUpdated', { detail: plan }));
 }
 
 export async function deletePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
-  try {
-    console.log('Deleting plan:', plan.id);
+  const currentUser = useSaveStateStore.getState().currentUser;
+  if (!currentUser) {
+    throw new Error('User must be logged in to delete a plan');
+  }
 
+  try {
     const response = await fetch('/api/vector', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -327,6 +300,125 @@ export async function deletePlan(plan: Plan, config: EmbeddingConfig): Promise<v
     console.error('Error deleting plan:', error);
     throw error;
   }
+}
+
+async function storePlan(plan: Plan, config: EmbeddingConfig): Promise<void> {
+  try {
+    if (!plan.namespace) {
+      throw new Error('Plan namespace is required');
+    }
+
+    const planText = JSON.stringify(plan);
+    const metadata = {
+      filename: `plan-${plan.id}.json`,
+      type: 'plan',
+      planId: plan.id,
+      status: plan.status,
+      plan: planText,
+      isComplete: true,
+      timestamp: new Date().toISOString()
+    };
+
+    const storeResponse = await fetch('/api/vector', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operation: 'process_document',
+        config,
+        text: planText,
+        filename: metadata.filename,
+        namespace: plan.namespace,
+        metadata
+      })
+    });
+
+    if (!storeResponse.ok) {
+      const errorData = await storeResponse.json();
+      throw new Error(errorData.error || 'Failed to store plan');
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+  } catch (error) {
+    console.error('Error storing plan:', error);
+    throw error;
+  }
+}
+
+function extractPlanDetails(content: string): { title: string; details: string } | null {
+  const patterns = [
+    /## Plan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /\bPlan:\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /Here(?:'s| is) (?:the |a )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i,
+    /Let(?:'s| us) (create |make |implement |develop )(?:a |the )?plan:?\s*([^\n]+)\n([\s\S]*?)(?=\n##|\s*$)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = content.match(pattern);
+    if (match) {
+      const title = match[1].trim();
+      const details = match[2]?.trim() || content.trim();
+      if (details) {
+        return { title, details };
+      }
+    }
+  }
+
+  const numberedListMatch = content.match(/(?:^|\n)\s*1\.\s+([^\n]+)(?:\n[\s\S]*)/);
+  if (numberedListMatch) {
+    const firstLine = numberedListMatch[1].trim();
+    const details = content.trim();
+    return {
+      title: `Plan: ${firstLine}`,
+      details
+    };
+  }
+
+  return null;
+}
+
+function extractSteps(content: string): PlanStep[] {
+  const stepPattern = /(?:^|\n)\s*(\d+)\.?\s*([^\n]+)(?:\n(?:\s*[-•].+\n?)*)?/gm;
+  const steps: PlanStep[] = [];
+  const timestamp = new Date().toISOString();
+  
+  let match;
+  while ((match = stepPattern.exec(content)) !== null) {
+    const [fullMatch, number, title] = match;
+    
+    const bulletPoints = fullMatch.match(/\s*[-•]\s*([^\n]+)/g) || [];
+    const description = bulletPoints
+      .map(point => point.replace(/^\s*[-•]\s*/, '').trim())
+      .join('\n');
+    
+    const stepId = generateUniqueId('step');
+
+    steps.push({
+      id: stepId,
+      title: title.trim(),
+      description: description || '',
+      status: 'pending',
+      dependencies: [],
+      created: timestamp,
+      updated: timestamp,
+      metadata: {
+        estimatedTime: extractEstimatedTime(fullMatch),
+        affectedFiles: extractAffectedFiles(fullMatch),
+        commands: extractCommands(fullMatch),
+        tests: extractTests(fullMatch),
+        rollback: extractRollback(fullMatch),
+        retryCount: 0
+      }
+    });
+  }
+
+  steps.forEach((step, index) => {
+    if (index > 0) {
+      step.dependencies.push(steps[index - 1].id);
+    }
+  });
+
+  return steps;
 }
 
 function detectPlanType(title: string, details: string): Plan['type'] {
@@ -400,6 +492,15 @@ function extractMetadata(content: string): Plan['metadata'] {
     metadata.dependencies = Array.from(dependencies);
   }
 
+  const versionMatch = content.match(/version:\s*v?(\d+)\.(\d+)\.(\d+)/i);
+  if (versionMatch) {
+    metadata.versionInfo = {
+      major: parseInt(versionMatch[1]),
+      minor: parseInt(versionMatch[2]),
+      patch: parseInt(versionMatch[3])
+    };
+  }
+
   return metadata;
 }
 
@@ -431,11 +532,6 @@ function extractAffectedFiles(content: string): string[] {
   return Array.from(files);
 }
 
-// services/plans.ts
-import type { EmbeddingConfig } from './embedding';
-
-// Keep all existing interfaces (Plan, PlanStep) and main functions up until extractCommands
-
 function extractCommands(content: string): string[] {
   if (!content) return [];
   
@@ -445,13 +541,12 @@ function extractCommands(content: string): string[] {
     /(?:run|execute|using)\s+(\S+[^.\s]*)/g,
     /\$\s*([^`\n]+)/g
   ];
-  
+
   patterns.forEach(pattern => {
     const matches = content.matchAll(pattern);
     for (const match of matches) {
-      const command = match[1] || match[2];
-      if (command && !command.includes('*')) {
-        commands.add(command.trim());
+      if (match[1] && !match[1].includes('*')) {
+        commands.add(match[1].trim());
       }
     }
   });

@@ -1,11 +1,12 @@
 // components/DocumentSidebar/DocumentSidebar.tsx
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { NamespaceManager, FileTypeFilter, FileUploader, DocumentList } from './internal/components';
 import { useDocumentSidebarState } from './internal/state';
 import type { DocumentSidebarProps } from './internal/types';
+import { useActiveProject } from '@/hooks/use-active-project';
 
 export function DocumentSidebar({ 
   config, 
@@ -14,37 +15,71 @@ export function DocumentSidebar({
   currentNamespace, 
   visible 
 }: DocumentSidebarProps) {
+  const mountedRef = useRef(false);
+  const initializeAttemptedRef = useRef(false);
   const {
     isConfigured,
     isLoading,
     loadingState,
     namespaces,
-    initialize,
-    refreshAll
+    refreshAll,
+    sidebarVisible,
+    setSidebarVisible,
+    selectedType,
+    setSortOrder
   } = useDocumentSidebarState();
 
-  useEffect(() => {
-    console.log('DocumentSidebar mounted with config:', {
-      isConfigured: !!config?.apiKeys?.pinecone,
-      indexName: config?.vectordb?.indexName,
-      hasVoyageKey: !!config?.apiKeys?.voyage,
-      cloud: config?.vectordb?.cloud,
-      region: config?.vectordb?.region
-    });
-    
-    if (config) {
-      console.log('Initializing with config...');
-      initialize(config);
-    }
-  }, [config, initialize]);
+  const { activeProject } = useActiveProject();
 
-  if (!visible) {
+  // Single initialization on first mount
+  useEffect(() => {
+    if (!mountedRef.current && !initializeAttemptedRef.current) {
+      console.log('DocumentSidebar mounted with config:', {
+        isConfigured: !!config?.apiKeys?.pinecone,
+        indexName: config?.vectordb?.indexName,
+        hasVoyageKey: !!config?.apiKeys?.voyage,
+        cloud: config?.vectordb?.cloud,
+        region: config?.vectordb?.region
+      });
+
+      if (config && activeProject) {
+        console.log('Initializing with config...');
+        useDocumentSidebarState.getState().initialize(config);
+        initializeAttemptedRef.current = true;
+      }
+    }
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [config, activeProject]);
+
+  // Handle configuration changes
+  useEffect(() => {
+    if (config && activeProject && initializeAttemptedRef.current) {
+      console.log('Config changed, reinitializing...');
+      useDocumentSidebarState.getState().initialize(config);
+    }
+  }, [config, activeProject]);
+
+  // Handle namespace changes
+  useEffect(() => {
+    if (currentNamespace && isConfigured) {
+      useDocumentSidebarState.getState().refreshDocuments(currentNamespace)
+        .catch(error => {
+          console.error('Error refreshing documents:', error);
+          onError(error.message);
+        });
+    }
+  }, [currentNamespace, isConfigured, onError]);
+
+  if (!activeProject || !visible || !sidebarVisible) {
     return null;
   }
 
   return (
     <div className="h-[calc(100vh-var(--header-height,64px))] flex flex-col overflow-hidden">
-      {/* Header with namespace manager */}
       <div className="flex-shrink-0 border-b dark:border-gray-700 p-4">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-medium">Document Manager</h2>
@@ -77,12 +112,10 @@ export function DocumentSidebar({
 
       {isConfigured && currentNamespace && (
         <>
-          {/* File type filter */}
           <div className="flex-shrink-0 border-b dark:border-gray-700 p-4">
             <FileTypeFilter />
           </div>
           
-          {/* File uploader */}
           <div className="flex-shrink-0 border-b dark:border-gray-700">
             <FileUploader 
               namespace={currentNamespace} 
@@ -90,7 +123,6 @@ export function DocumentSidebar({
             />
           </div>
 
-          {/* Document list - scrollable area */}
           <div className="flex-1 min-h-0 overflow-auto">
             <DocumentList 
               namespace={currentNamespace}
@@ -102,5 +134,3 @@ export function DocumentSidebar({
     </div>
   );
 }
-
-export type { DocumentSidebarProps };
