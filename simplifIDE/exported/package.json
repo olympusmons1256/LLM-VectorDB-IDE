@@ -1,0 +1,48 @@
+{
+    "name": "canvas-app",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "next start",
+        "lint": "next lint"
+    },
+    "dependencies": {
+        "@monaco-editor/react": "^4.6.0",
+        "@pinecone-database/pinecone": "^1.1.2",
+        "@radix-ui/react-alert-dialog": "^1.1.4",
+        "@radix-ui/react-dialog": "^1.1.4",
+        "@radix-ui/react-label": "^2.1.1",
+        "@radix-ui/react-progress": "^1.1.1",
+        "@radix-ui/react-scroll-area": "^1.2.2",
+        "@radix-ui/react-select": "^2.1.4",
+        "@radix-ui/react-slider": "^1.2.2",
+        "@radix-ui/react-slot": "^1.1.1",
+        "@radix-ui/react-tabs": "^1.0.4",
+        "@types/node": "^20.17.12",
+        "@types/react": "^18.3.18",
+        "@types/react-dom": "^18.2.7",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.263.1",
+        "next": "^13.5.8",
+        "prism-react-renderer": "^2.4.1",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "react-markdown": "^9.0.3",
+        "remark-gfm": "^4.0.0",
+        "tailwind-merge": "^2.6.0",
+        "tailwindcss-animate": "^1.0.7",
+        "typescript": "^5.7.3",
+        "uuid": "^9.0.1",
+        "zustand": "^4.5.6"
+    },
+    "devDependencies": {
+        "autoprefixer": "^10.4.20",
+        "eslint": "^8.57.1",
+        "eslint-config-next": "^13.5.8",
+        "postcss": "^8.4.49",
+        "tailwindcss": "^3.4.17"
+    }
+}

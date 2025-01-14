@@ -12,8 +12,8 @@ find . -type f \
     ! -name "export-flat.sh" \
     -print0 | while IFS= read -r -d '' file; do
     
-    # Create new filename with * prefix
-    newname="$(echo "$file" | sed 's/^\.\///' | sed 's/\//-/g')"
+    # Create new filename
+    newname=$(echo "$file" | sed 's/^\.\///' | sed 's/\//-/g')
     
     # Copy file
     cp "$file" "exported/$newname"
